@@ -1,29 +1,25 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/useColorScheme';
+// app/_layout.tsx
+import { SplashScreen, Stack } from "expo-router";
+import { useEffect } from "react";
+import Toast from 'react-native-toast-message'; // Import Toast
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
-
-  if (!loaded) {
-    // Async font loading only occurs in development.
-    return null;
-  }
+  useEffect(() => {
+    // This hides the splash screen as soon as the root layout is mounted.
+    // It's generally good practice to hide it after your initial data is loaded
+    // if you have any, but for now, this is fine.
+    SplashScreen.hideAsync();
+  }, []);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <> {/* Use a React Fragment to wrap multiple top-level elements */}
+      <Stack
+        screenOptions={{
+          headerShown: false, // Hides the header for all screens by default
+        }}
+      />
+      {/* Render the Toast component */}
+      <Toast />
+    </>
   );
 }
