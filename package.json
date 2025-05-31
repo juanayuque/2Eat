@@ -1,23 +1,4 @@
 {
-<<<<<<< HEAD
-  "name": "backend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "firebase-admin": "^13.4.0",
-    "pg": "^8.16.0"
-  }
-=======
   "name": "2eat",
   "main": "expo-router/entry",
   "version": "1.0.0",
@@ -68,5 +49,4 @@
     "typescript": "~5.8.3"
   },
   "private": true
->>>>>>> fbf9f59 (Initial commit)
 }
