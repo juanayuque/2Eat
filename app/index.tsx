@@ -16,7 +16,7 @@ export default function Index() {
       } else if (enrolmentComplete !== null) {
         router.replace("/onboarding/login");
       } else {
-        router.replace("/onboarding/welcome");
+        router.replace("/onboarding/login");
       }
     });
 

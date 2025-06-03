@@ -12,8 +12,8 @@ import {
     TextInput,
     TouchableOpacity
 } from "react-native";
-import { showRegisterError } from "../../assets/utils/authErrors";
 import { auth } from "../../firebaseConfig";
+import { showRegisterError } from "../../src/utils/authErrors";
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState("");
