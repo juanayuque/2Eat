@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { auth } from '../../firebaseConfig'; // Replace with your actual path
+import { auth } from '../../firebaseConfig';
 
 interface Props {
   location: { latitude: number; longitude: number } | null;

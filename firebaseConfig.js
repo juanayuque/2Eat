@@ -1,8 +1,16 @@
-// firebaseConfig.js
-import { initializeApp } from "firebase/app";
+// firebaseConfig.ts
+import { initializeApp, getApp, getApps } from "firebase/app";
 import {
-  getAuth
-} from 'firebase/auth';
+  initializeAuth,
+  getReactNativePersistence,
+  getAuth,
+  setPersistence,
+  indexedDBLocalPersistence, // web
+  browserLocalPersistence,   // web fallback
+  Auth,
+} from "firebase/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAIEdLP149Kq3_s0CmUbo-DHTZsrfN4oR4",
@@ -14,6 +22,23 @@ const firebaseConfig = {
   measurementId: "G-W6JPB8QLNX"
 };
 
-export const app = initializeApp(firebaseConfig);
+export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
+// Create exactly ONE Auth instance, with proper persistence per platform
+let _auth: Auth;
+
+if (Platform.OS === "web") {
+  // Web: use standard web persistence
+  _auth = getAuth(app);
+  // pick IndexedDB, fallback to localStorage
+  setPersistence(_auth, indexedDBLocalPersistence).catch(() =>
+    setPersistence(_auth, browserLocalPersistence)
+  );
+} else {
+  // React Native: use AsyncStorage persistence (this removes your warning)
+  _auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+}
+
+export const auth = _auth;

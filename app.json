@@ -2,6 +2,11 @@
   "expo": {
     "name": "2Eat",
     "slug": "2Eat",
+    "splash": {
+      "image": "./src/assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f0c29"
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./src/assets/images/icon.png",

@@ -3,8 +3,8 @@ import { signOut } from "firebase/auth";
 import { useEffect, useState } from "react";
 import { Button, Text, View } from "react-native";
 import * as Location from "expo-location";
-import { auth } from "../../firebaseConfig";
-import RestaurantRecommendations from "../../src/components/RestaurantRecommendations";
+import { auth } from "../../../firebaseConfig";
+import RestaurantRecommendations from "../../../src/components/RestaurantRecommendations";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -34,7 +34,7 @@ export default function HomeScreen() {
 
   const handleLogout = async () => {
     await signOut(auth);
-    router.replace("/onboarding/login");
+    router.replace("/onboarding/welcome");
   };
 
   return (

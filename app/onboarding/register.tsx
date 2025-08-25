@@ -1,119 +1,160 @@
 // app/onboarding/register.tsx
-
 import { useRouter } from "expo-router";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  ActivityIndicator,
 } from "react-native";
 import { auth } from "../../firebaseConfig";
 import { showRegisterError } from "../../src/utils/authErrors";
 
 export default function RegisterScreen() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
 
   const handleRegister = async () => {
+    if (!email.trim() || !password) {
+      Alert.alert("Missing info", "Please enter an email and password.");
+      return;
+    }
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      Alert.alert("Success", "Account created!");
-      router.replace("/onboarding/home");
+      setSubmitting(true);
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      // Continue your onboarding flow
+      router.replace("/onboarding/intro");
     } catch (error: any) {
-        console.log('Sign up Error:', error.message);
+      console.log("Sign up Error:", error?.message);
       showRegisterError(error);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.container}
+      keyboardVerticalOffset={24}
+      style={styles.kav} // <- no flex; layout centers us
     >
-      <Text style={styles.title}>Create an Account</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Create an account</Text>
+        <Text style={styles.subtitle}>
+          Join 2Eat and discover great places near you.
+        </Text>
+      </View>
 
       <TextInput
         style={styles.input}
         placeholder="Email"
+        placeholderTextColor="rgba(255,255,255,0.7)"
         autoCapitalize="none"
+        autoComplete="email"
         keyboardType="email-address"
+        textContentType="emailAddress"
         value={email}
         onChangeText={setEmail}
-        placeholderTextColor="#999"
+        selectionColor="#fff"
       />
 
       <TextInput
         style={styles.input}
         placeholder="Password"
+        placeholderTextColor="rgba(255,255,255,0.7)"
         secureTextEntry
+        textContentType="password"
         value={password}
         onChangeText={setPassword}
-        placeholderTextColor="#999"
+        selectionColor="#fff"
       />
 
-      <TouchableOpacity style={styles.button} onPress={handleRegister}>
-        <Text style={styles.buttonText}>Sign Up</Text>
+      <TouchableOpacity
+        style={[styles.primaryBtn, submitting && { opacity: 0.7 }]}
+        onPress={handleRegister}
+        disabled={submitting}
+        activeOpacity={0.85}
+      >
+        {submitting ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.primaryBtnText}>Sign Up</Text>
+        )}
       </TouchableOpacity>
 
       <TouchableOpacity
-              style={[styles.button, { backgroundColor: "#888", marginTop: 10 }]}
-              onPress={() => router.push("/onboarding/login")}
-              >
-              <Text style={styles.buttonText}>Back to Login</Text>
-              </TouchableOpacity>
+        style={styles.linkBtn}
+        onPress={() => router.push("/onboarding/login")}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.linkText}>I already have an account</Text>
+      </TouchableOpacity>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    paddingHorizontal: 30,
+  // Important: no flex here so the layout can center this block
+  kav: {
+    alignSelf: "stretch",
+  },
+  header: {
+    marginBottom: 10,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 40,
+    fontSize: 26,
+    fontWeight: "800",
+    color: "#fff",
     textAlign: "center",
-    color: "#333",
+  },
+  subtitle: {
+    marginTop: 6,
+    fontSize: 14,
+    color: "rgba(255,255,255,0.85)",
+    textAlign: "center",
   },
   input: {
-    height: 50,
-    borderColor: "#ccc",
+    width: "100%",
+    height: 52,
+    paddingHorizontal: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    marginBottom: 20,
-    fontSize: 16,
-    color: "#000",
-    backgroundColor: "#f9f9f9",
+    borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(255,255,255,0.10)", // glassy on the gradient
+    color: "#fff",
+    marginTop: 12,
   },
-  button: {
-    backgroundColor: "#367CD1",
-    paddingVertical: 14,
-    borderRadius: 8,
+  primaryBtn: {
+    height: 52,
+    borderRadius: 14,
     alignItems: "center",
-    marginTop: 10,
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
+    marginTop: 16,
   },
-  buttonText: {
+  primaryBtnText: {
     color: "#fff",
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "700",
   },
-  linkButton: {
-    marginTop: 20,
+  linkBtn: {
     alignItems: "center",
+    paddingVertical: 10,
+    marginTop: 8,
   },
   linkText: {
-    color: "#367CD1",
+    color: "rgba(255,255,255,0.95)",
     fontSize: 14,
+    textDecorationLine: "underline",
   },
 });
