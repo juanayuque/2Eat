@@ -1,19 +1,14 @@
 // app/(tabs)/preferences/index.tsx
-import Slider from "@/src/components/SliderX";
-import React, { useEffect, useMemo, useState } from "react";
+import Slider from "@react-native-community/slider";
+import React, { useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { auth } from "../../../firebaseConfig";
-
-const BACKEND_API_BASE_URL = "https://2eatapp.com";
 
 const ACCENT = "#4f46e5"; // indigo
 const LIGHT = "#f2f2f7";
@@ -45,17 +40,10 @@ const DISTANCE_OPTIONS = [2, 5, 10, 20] as const;
 type DistanceVal = number | null; // null = Unlimited
 
 export default function Preferences() {
-  const insets = useSafeAreaInsets();
-
   const [cuisines, setCuisines] = useState<string[]>([]);
   const [diet, setDiet] = useState<string[]>([]);
   const [budgetMax, setBudgetMax] = useState<number>(25); // £0–100
   const [distanceKm, setDistanceKm] = useState<DistanceVal>(5); // null => Unlimited
-
-  const [loadingInitial, setLoadingInitial] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const toggle = (
     list: string[],
@@ -65,7 +53,8 @@ export default function Preferences() {
     setList(list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
   };
 
-  // £0 => 0★, £1–15 => ★, £16–30 => ★★, £31–60 => ★★★, £61–100 => ★★★★
+  // Stars reflect price bands:
+  // £0 => 0 stars, £1–15 => ★, £16–30 => ★★, £31–60 => ★★★, £61–100 => ★★★★
   const starCount = useMemo(() => {
     if (budgetMax <= 0) return 0;
     if (budgetMax <= 15) return 1;
@@ -74,84 +63,17 @@ export default function Preferences() {
     return 4;
   }, [budgetMax]);
 
-  // Prefill from backend if available
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoadingInitial(true);
-        setError(null);
-        const user = auth.currentUser;
-        if (!user) return;
-        const idToken = await user.getIdToken();
-        const res = await fetch(`${BACKEND_API_BASE_URL}/api/users/preferences`, {
-          headers: { Authorization: `Bearer ${idToken}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled || !data) return;
-        setCuisines(data.cuisines ?? data.preferredCuisines ?? []);
-        setDiet(data.diet ?? data.dietaryNeeds ?? []);
-        setBudgetMax(
-          typeof data.budgetMax === "number"
-            ? data.budgetMax
-            : typeof data.maxBudget === "number"
-            ? data.maxBudget
-            : 25
-        );
-        setDistanceKm(
-          data.distanceKm === null
-            ? null
-            : typeof data.distanceKm === "number"
-            ? data.distanceKm
-            : typeof data.searchDistance === "number"
-            ? data.searchDistance
-            : 5
-        );
-      } catch {
-        /* best-effort */
-      } finally {
-        if (!cancelled) setLoadingInitial(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const onSave = async () => {
-    try {
-      setSaving(true);
-      setStatus(null);
-      setError(null);
-      const user = auth.currentUser;
-      if (!user) {
-        setError("Not authenticated.");
-        return;
-      }
-      const idToken = await user.getIdToken();
-      const payload = {
-        cuisines,
-        diet,
-        budgetMax,
-        priceLevel: starCount, // 0–4
-        distanceKm, // number or null
-      };
-      const res = await fetch(`${BACKEND_API_BASE_URL}/api/users/preferences`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setStatus("Preferences saved.");
-    } catch (e: any) {
-      setError(e?.message || "Failed to save preferences.");
-    } finally {
-      setSaving(false);
-    }
+    // TODO: wire to backend: /api/users/preferences (auth required)
+    // payload example:
+    // { cuisines, diet, budgetMax, priceLevel: starCount, distanceKm }
+    console.log("Saving preferences:", {
+      cuisines,
+      diet,
+      budgetMax,
+      priceLevel: starCount,
+      distanceKm,
+    });
   };
 
   const onClear = () => {
@@ -159,28 +81,12 @@ export default function Preferences() {
     setDiet([]);
     setBudgetMax(0);
     setDistanceKm(null);
-    setStatus(null);
-    setError(null);
   };
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[
-        styles.container,
-        { paddingBottom: 32 + insets.bottom + 100 }, // extra space so buttons sit above the tab bar
-      ]}
-      keyboardShouldPersistTaps="handled"
-    >
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <Text style={styles.title}>⚙️ Preferences</Text>
       <Text style={styles.subtitle}>Tune what shows up in your recommendations.</Text>
-
-      {loadingInitial && (
-        <View style={styles.inlineLoading}>
-          <ActivityIndicator />
-          <Text style={{ color: MUTED, marginTop: 6 }}>Loading your preferences…</Text>
-        </View>
-      )}
 
       <Section title="🍽️ Cuisines">
         <Text style={styles.hint}>Pick as many as you like</Text>
@@ -210,24 +116,23 @@ export default function Preferences() {
         </View>
       </Section>
 
-      <Section title="💸 Budget (per person)">
+      {/* Budget line + stars */}
+      <Section title="💸 Budget (max per person)">
         <View style={{ gap: 8 }}>
           <Text style={styles.budgetReadout}>
             £{budgetMax}  ·  {"★".repeat(starCount)}
             {"☆".repeat(4 - starCount)}
           </Text>
 
-          {/* SliderX – keeping the common Slider API props */}
           <Slider
             minimumValue={0}
             maximumValue={100}
             step={1}
             value={budgetMax}
             onValueChange={setBudgetMax}
-            // min={0} max={100} step={1} value={budgetMax} onChange={setBudgetMax}
             style={{ width: "100%", height: 40 }}
             minimumTrackTintColor={ACCENT}
-            maximumTrackTintColor={BORDER}
+            maximumTrackTintColor={BORDER} // visible on white
             thumbTintColor={Platform.select({ ios: "#FFF", android: "#FFF" })}
           />
 
@@ -238,11 +143,12 @@ export default function Preferences() {
           </View>
 
           <Text style={styles.hint}>
-            Stars reflect a rough price band.
+            Stars reflect a rough price band: £0–15 (★), £16–30 (★★), £31–60 (★★★), £61–100 (★★★★).
           </Text>
         </View>
       </Section>
 
+      {/* Distance buttons + Unlimited */}
       <Section title="📍 Distance">
         <Text style={styles.hint}>Show places up to this distance</Text>
         <View style={[styles.pillWrap, { marginTop: 12 }]}>
@@ -269,13 +175,13 @@ export default function Preferences() {
         </Text>
       </Section>
 
+      {/* Actions */}
       <View style={styles.actionsRow}>
-        <PrimaryButton label={saving ? "Saving…" : "Save"} onPress={onSave} />
+        <PrimaryButton label="Save" onPress={onSave} />
         <GhostButton label="Clear" onPress={onClear} />
       </View>
 
-      {status && <Text style={styles.statusMsg}>{status}</Text>}
-      {error && <Text style={styles.errorMsg}>{error}</Text>}
+      <View style={{ height: 28 }} />
     </ScrollView>
   );
 }
@@ -364,8 +270,7 @@ const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
     paddingTop: 18,
-    paddingBottom: 32, // base; extra added dynamically via Safe Area
-    maxWidth: 520,
+    maxWidth: 520, // phone-like column on wide screens
     width: "100%",
     alignSelf: "center",
   },
@@ -373,22 +278,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "800",
     color: TEXT,
+    textAlign: "left",
   },
   subtitle: {
     marginTop: 4,
     fontSize: 14,
     color: MUTED,
-  },
-
-  inlineLoading: {
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#fff",
   },
 
   section: {
@@ -490,18 +385,5 @@ const styles = StyleSheet.create({
     color: TEXT,
     fontWeight: "800",
     fontSize: 16,
-  },
-
-  statusMsg: {
-    marginTop: 10,
-    textAlign: "center",
-    color: "#0f766e",
-    fontWeight: "700",
-  },
-  errorMsg: {
-    marginTop: 10,
-    textAlign: "center",
-    color: "#b91c1c",
-    fontWeight: "700",
   },
 });

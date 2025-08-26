@@ -105,6 +105,9 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>
             Like or Pass on the following suggestions!
           </Text>
+          <Text style={styles.subtitle}>
+            You will be given a match with your top selections :)
+          </Text>
         </View>
 
         {/* Data provider + UI */}
