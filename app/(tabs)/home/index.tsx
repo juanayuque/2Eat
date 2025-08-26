@@ -1,5 +1,4 @@
 // app/(tabs)/home/index.tsx
-import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,6 +13,8 @@ import {
 import { auth } from "../../../firebaseConfig";
 import AppContainer from "../../../src/components/AppContainer";
 import RestaurantRecommendations from "../../../src/components/RestaurantRecommendations";
+import { fetchCityFromBackend, getLocationResilient } from "../../../src/utils/location";
+
 
 const FALLBACK_IMG = require("../../../src/assets/images/2Eat-Logo.png");
 
@@ -34,30 +35,43 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") {
-          setLocError("Location permission denied");
-          return;
-        }
-        const l = await Location.getCurrentPositionAsync({});
-        const c: Coords = {
-          latitude: l.coords.latitude,
-          longitude: l.coords.longitude,
-        };
-        setCoords(c);
+  let cancelled = false;
 
-        const geo = await Location.reverseGeocodeAsync(c);
-        const first = geo?.[0];
-        const cityName =
-          first?.city || first?.subregion || first?.region || first?.name;
-        if (cityName) setCity(cityName);
-      } catch {
-        setLocError("Could not get location");
+  (async () => {
+    try {
+      setLocError(null);
+
+      const loc = await getLocationResilient();
+      if (cancelled) return;
+      setCoords(loc);
+
+      // Get Firebase ID token and resolve city via backend
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        setCity(null);
+        return;
       }
-    })();
-  }, []);
+
+      const cityName = await fetchCityFromBackend(
+        loc.latitude,
+        loc.longitude,
+        token,
+        "https://2eatapp.com"
+      );
+      if (!cancelled) setCity(cityName ?? "Unavailable");
+    } catch (e: any) {
+      if (!cancelled) {
+        setLocError(
+          e?.message === "perm-denied"
+            ? "Location permission denied"
+            : "Location temporarily unavailable"
+        );
+      }
+    }
+  })();
+
+  return () => { cancelled = true; };
+}, []);
 
   // tiny bump animation (disable native driver on web to avoid warnings)
   const cardScale = useRef(new Animated.Value(1)).current;
