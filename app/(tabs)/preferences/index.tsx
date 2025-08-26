@@ -1,35 +1,32 @@
 // app/(tabs)/preferences/index.tsx
 import Slider from "@/src/components/SliderX";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Animated,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { auth } from "../../../firebaseConfig";
 
 const BACKEND_API_BASE_URL = "https://2eatapp.com";
 
-const ACCENT = "#4f46e5"; // indigo
+const ACCENT = "#4f46e5";
 const LIGHT = "#f2f2f7";
 const BORDER = "#e5e5ea";
 const TEXT = "#111";
 const MUTED = "#666";
 
 const CUISINE_OPTIONS = [
-  "Italian",
-  "Mexican",
-  "Chinese",
-  "Japanese",
-  "Indian",
-  "Thai",
-  "American",
-  "Mediterranean",
+  "Italian","Chinese","Indian","Thai","Japanese","Mexican","American",
+  "Mediterranean","Middle Eastern","French","Korean","Vietnamese",
+  "Spanish","Greek","BBQ","Burgers","Seafood","Sushi", "Fast Food"
 ];
 
 const DIET_OPTIONS = [
@@ -42,30 +39,19 @@ const DIET_OPTIONS = [
 ];
 
 const DISTANCE_OPTIONS = [2, 5, 10, 20] as const;
-type DistanceVal = number | null; // null = Unlimited
+type DistanceVal = number | null;
 
 export default function Preferences() {
   const insets = useSafeAreaInsets();
 
-  const [cuisines, setCuisines] = useState<string[]>([]);
-  const [diet, setDiet] = useState<string[]>([]);
-  const [budgetMax, setBudgetMax] = useState<number>(25); // £0–100
-  const [distanceKm, setDistanceKm] = useState<DistanceVal>(5); // null => Unlimited
+  const [preferredCuisines, setPreferredCuisines] = useState<string[]>([]);
+  const [dietaryNeeds, setDietaryNeeds] = useState<string[]>([]);
+  const [budgetMax, setBudgetMax] = useState<number>(25);
+  const [searchDistance, setSearchDistance] = useState<DistanceVal>(5);
 
   const [loadingInitial, setLoadingInitial] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const toggle = (
-    list: string[],
-    setList: (v: string[]) => void,
-    item: string
-  ) => {
-    setList(list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
-  };
-
-  // £0 => 0★, £1–15 => ★, £16–30 => ★★, £31–60 => ★★★, £61–100 => ★★★★
   const starCount = useMemo(() => {
     if (budgetMax <= 0) return 0;
     if (budgetMax <= 15) return 1;
@@ -74,13 +60,31 @@ export default function Preferences() {
     return 4;
   }, [budgetMax]);
 
-  // Prefill from backend if available
+  const scrollRef = useRef<ScrollView>(null);
+  useFocusEffect(
+    useCallback(() => {
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ y: 0, animated: false });
+      });
+    }, [])
+  );
+
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    Animated.sequence([
+      Animated.timing(toastOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.delay(1800),
+      Animated.timing(toastOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => setToastMsg(null));
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoadingInitial(true);
-        setError(null);
         const user = auth.currentUser;
         if (!user) return;
         const idToken = await user.getIdToken();
@@ -89,27 +93,13 @@ export default function Preferences() {
         });
         if (!res.ok) return;
         const data = await res.json();
-        if (cancelled || !data) return;
-        setCuisines(data.cuisines ?? data.preferredCuisines ?? []);
-        setDiet(data.diet ?? data.dietaryNeeds ?? []);
-        setBudgetMax(
-          typeof data.budgetMax === "number"
-            ? data.budgetMax
-            : typeof data.maxBudget === "number"
-            ? data.maxBudget
-            : 25
-        );
-        setDistanceKm(
-          data.distanceKm === null
-            ? null
-            : typeof data.distanceKm === "number"
-            ? data.distanceKm
-            : typeof data.searchDistance === "number"
-            ? data.searchDistance
-            : 5
-        );
-      } catch {
-        /* best-effort */
+        const p = data?.preferences ?? data ?? {};
+        if (cancelled) return;
+
+        setPreferredCuisines(Array.isArray(p.preferredCuisines) ? p.preferredCuisines : []);
+        setDietaryNeeds(Array.isArray(p.dietaryNeeds) ? p.dietaryNeeds : []);
+        setBudgetMax(typeof p.budgetMax === "number" ? p.budgetMax : 25);
+        setSearchDistance(p.searchDistance === null ? null : typeof p.searchDistance === "number" ? p.searchDistance : 5);
       } finally {
         if (!cancelled) setLoadingInitial(false);
       }
@@ -122,173 +112,204 @@ export default function Preferences() {
   const onSave = async () => {
     try {
       setSaving(true);
-      setStatus(null);
-      setError(null);
       const user = auth.currentUser;
       if (!user) {
-        setError("Not authenticated.");
+        showToast("Not signed in");
         return;
       }
       const idToken = await user.getIdToken();
-      const payload = {
-        cuisines,
-        diet,
-        budgetMax,
-        priceLevel: starCount, // 0–4
-        distanceKm, // number or null
-      };
+      const payload = { preferredCuisines, dietaryNeeds, budgetMax, searchDistance };
       const res = await fetch(`${BACKEND_API_BASE_URL}/api/users/preferences`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
-      setStatus("Preferences saved.");
-    } catch (e: any) {
-      setError(e?.message || "Failed to save preferences.");
+      showToast("Preferences saved");
+    } catch {
+      showToast("Failed to save");
     } finally {
       setSaving(false);
     }
   };
 
   const onClear = () => {
-    setCuisines([]);
-    setDiet([]);
+    setPreferredCuisines([]);
+    setDietaryNeeds([]);
     setBudgetMax(0);
-    setDistanceKm(null);
-    setStatus(null);
-    setError(null);
+    setSearchDistance(null);
+    showToast("Cleared");
   };
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[
-        styles.container,
-        { paddingBottom: 32 + insets.bottom + 100 }, // extra space so buttons sit above the tab bar
-      ]}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.title}>⚙️ Preferences</Text>
-      <Text style={styles.subtitle}>Tune what shows up in your recommendations.</Text>
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.screen}
+        contentContainerStyle={[styles.container, { paddingBottom: 32 + insets.bottom + 100 }]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>⚙️ Preferences</Text>
+        <Text style={styles.subtitle}>Tune what shows up in your recommendations.</Text>
 
-      {loadingInitial && (
-        <View style={styles.inlineLoading}>
-          <ActivityIndicator />
-          <Text style={{ color: MUTED, marginTop: 6 }}>Loading your preferences…</Text>
-        </View>
-      )}
+        {loadingInitial && (
+          <View style={styles.inlineLoading}>
+            <ActivityIndicator />
+            <Text style={{ color: MUTED, marginTop: 6 }}>Loading your preferences…</Text>
+          </View>
+        )}
 
-      <Section title="🍽️ Cuisines">
-        <Text style={styles.hint}>Pick as many as you like</Text>
-        <View style={styles.pillWrap}>
-          {CUISINE_OPTIONS.map((c) => (
-            <Pill
-              key={c}
-              label={c}
-              selected={cuisines.includes(c)}
-              onPress={() => toggle(cuisines, setCuisines, c)}
+        <Section title="🍽️ Cuisines">
+          <Text style={styles.hint}>Pick as many as you like</Text>
+          <View style={styles.pillWrap}>
+            {CUISINE_OPTIONS.map((c) => (
+              <Pill
+                key={c}
+                label={c}
+                selected={preferredCuisines.includes(c)}
+                onPress={() =>
+                  setPreferredCuisines(
+                    preferredCuisines.includes(c)
+                      ? preferredCuisines.filter((x) => x !== c)
+                      : [...preferredCuisines, c]
+                  )
+                }
+              />
+            ))}
+          </View>
+        </Section>
+
+        <Section title="🥦 Diet">
+          <Text style={styles.hint}>Optional dietary needs</Text>
+          <View style={styles.pillWrap}>
+            {DIET_OPTIONS.map((d) => (
+              <Pill
+                key={d}
+                label={d}
+                selected={dietaryNeeds.includes(d)}
+                onPress={() =>
+                  setDietaryNeeds(
+                    dietaryNeeds.includes(d)
+                      ? dietaryNeeds.filter((x) => x !== d)
+                      : [...dietaryNeeds, d]
+                  )
+                }
+              />
+            ))}
+          </View>
+        </Section>
+
+        <Section title="💸 Budget (per person)">
+          <View style={{ gap: 8 }}>
+            <Text style={styles.budgetReadout}>
+              £{budgetMax}  ·  {"★".repeat(starCount)}
+              {"☆".repeat(4 - starCount)}
+            </Text>
+
+            <Slider
+              minimumValue={0}
+              maximumValue={100}
+              step={1}
+              value={budgetMax}
+              onValueChange={setBudgetMax}
+              style={{ width: "100%", height: 40 }}
+              minimumTrackTintColor={ACCENT}
+              maximumTrackTintColor={BORDER}
+              thumbTintColor={Platform.select({ ios: "#FFF", android: "#FFF" })}
             />
-          ))}
-        </View>
-      </Section>
 
-      <Section title="🥦 Diet">
-        <Text style={styles.hint}>Optional dietary needs</Text>
-        <View style={styles.pillWrap}>
-          {DIET_OPTIONS.map((d) => (
+            <View style={styles.sliderLabels}>
+              <Text style={styles.sliderLabelText}>£0</Text>
+              <Text style={styles.sliderLabelText}>£50</Text>
+              <Text style={styles.sliderLabelText}>£100</Text>
+            </View>
+
+            <Text style={styles.hint}>Stars reflect a rough price band.</Text>
+          </View>
+        </Section>
+
+        <Section title="📍 Distance">
+          <Text style={styles.hint}>Show places up to this distance</Text>
+          <View style={[styles.pillWrap, { marginTop: 12 }]}>
+            {DISTANCE_OPTIONS.map((d) => (
+              <Pill
+                key={d}
+                label={`${d} km`}
+                selected={searchDistance === d}
+                onPress={() => setSearchDistance(d)}
+              />
+            ))}
             <Pill
-              key={d}
-              label={d}
-              selected={diet.includes(d)}
-              onPress={() => toggle(diet, setDiet, d)}
+              label="Unlimited"
+              selected={searchDistance === null}
+              onPress={() => setSearchDistance(null)}
             />
-          ))}
-        </View>
-      </Section>
-
-      <Section title="💸 Budget (per person)">
-        <View style={{ gap: 8 }}>
-          <Text style={styles.budgetReadout}>
-            £{budgetMax}  ·  {"★".repeat(starCount)}
-            {"☆".repeat(4 - starCount)}
-          </Text>
-
-          {/* SliderX – keeping the common Slider API props */}
-          <Slider
-            minimumValue={0}
-            maximumValue={100}
-            step={1}
-            value={budgetMax}
-            onValueChange={setBudgetMax}
-            // min={0} max={100} step={1} value={budgetMax} onChange={setBudgetMax}
-            style={{ width: "100%", height: 40 }}
-            minimumTrackTintColor={ACCENT}
-            maximumTrackTintColor={BORDER}
-            thumbTintColor={Platform.select({ ios: "#FFF", android: "#FFF" })}
-          />
-
-          <View style={styles.sliderLabels}>
-            <Text style={styles.sliderLabelText}>£0</Text>
-            <Text style={styles.sliderLabelText}>£50</Text>
-            <Text style={styles.sliderLabelText}>£100</Text>
           </View>
 
-          <Text style={styles.hint}>
-            Stars reflect a rough price band.
+          <Text style={[styles.hint, { marginTop: 8 }]}>
+            Selected:{" "}
+            <Text style={styles.metricStrong}>
+              {searchDistance === null ? "Unlimited" : `${searchDistance} km`}
+            </Text>
           </Text>
+        </Section>
+
+        <View style={styles.actionsRow}>
+          <Pressable
+            onPress={onSave}
+            disabled={saving}
+            style={({ hovered, pressed }) => [
+              styles.primaryBtn,
+              hovered && { opacity: 0.9 },
+              pressed && { transform: [{ scale: 0.98 }] },
+              Platform.OS === "web" && { cursor: "pointer" },
+              saving && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={styles.primaryBtnText}>{saving ? "Saving…" : "Save"}</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onClear}
+            style={({ hovered, pressed }) => [
+              styles.ghostBtn,
+              hovered && { backgroundColor: "#fafafa" },
+              pressed && { transform: [{ scale: 0.98 }] },
+              Platform.OS === "web" && { cursor: "pointer" },
+            ]}
+          >
+            <Text style={styles.ghostBtnText}>Clear</Text>
+          </Pressable>
         </View>
-      </Section>
+      </ScrollView>
 
-      <Section title="📍 Distance">
-        <Text style={styles.hint}>Show places up to this distance</Text>
-        <View style={[styles.pillWrap, { marginTop: 12 }]}>
-          {DISTANCE_OPTIONS.map((d) => (
-            <Pill
-              key={d}
-              label={`${d} km`}
-              selected={distanceKm === d}
-              onPress={() => setDistanceKm(d)}
-            />
-          ))}
-          <Pill
-            label="Unlimited"
-            selected={distanceKm === null}
-            onPress={() => setDistanceKm(null)}
-          />
-        </View>
-
-        <Text style={[styles.hint, { marginTop: 8 }]}>
-          Selected:{" "}
-          <Text style={styles.metricStrong}>
-            {distanceKm === null ? "Unlimited" : `${distanceKm} km`}
-          </Text>
-        </Text>
-      </Section>
-
-      <View style={styles.actionsRow}>
-        <PrimaryButton label={saving ? "Saving…" : "Save"} onPress={onSave} />
-        <GhostButton label="Clear" onPress={onClear} />
-      </View>
-
-      {status && <Text style={styles.statusMsg}>{status}</Text>}
-      {error && <Text style={styles.errorMsg}>{error}</Text>}
-    </ScrollView>
+      {toastMsg && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              bottom: 24 + insets.bottom + 56,
+              opacity: toastOpacity,
+              transform: [
+                {
+                  translateY: toastOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [10, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
-/* ---------- Reusable UI ---------- */
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -322,63 +343,18 @@ function Pill({
   );
 }
 
-function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ hovered, pressed }) => [
-        styles.primaryBtn,
-        hovered && { opacity: 0.9 },
-        pressed && { transform: [{ scale: 0.98 }] },
-        Platform.OS === "web" && { cursor: "pointer" },
-      ]}
-    >
-      <Text style={styles.primaryBtnText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function GhostButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ hovered, pressed }) => [
-        styles.ghostBtn,
-        hovered && { backgroundColor: "#fafafa" },
-        pressed && { transform: [{ scale: 0.98 }] },
-        Platform.OS === "web" && { cursor: "pointer" },
-      ]}
-    >
-      <Text style={styles.ghostBtnText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-/* ---------- Styles ---------- */
-
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
+  screen: { flex: 1, backgroundColor: "#fff" },
   container: {
     paddingHorizontal: 16,
     paddingTop: 18,
-    paddingBottom: 32, // base; extra added dynamically via Safe Area
+    paddingBottom: 32,
     maxWidth: 520,
     width: "100%",
     alignSelf: "center",
   },
-  title: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: TEXT,
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    color: MUTED,
-  },
+  title: { fontSize: 22, fontWeight: "800", color: TEXT },
+  subtitle: { marginTop: 4, fontSize: 14, color: MUTED },
 
   inlineLoading: {
     marginTop: 14,
@@ -404,22 +380,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: TEXT,
-  },
-  hint: {
-    fontSize: 13,
-    color: MUTED,
-  },
+  sectionTitle: { fontSize: 16, fontWeight: "800", color: TEXT },
+  hint: { fontSize: 13, color: MUTED },
 
-  pillWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 8,
-  },
+  pillWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   pill: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -428,31 +392,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
   },
-  pillText: {
-    color: TEXT,
-    fontWeight: "700",
-    fontSize: 13,
-  },
+  pillText: { color: TEXT, fontWeight: "700", fontSize: 13 },
 
-  budgetReadout: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: TEXT,
-  },
-  sliderLabels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 2,
-  },
-  sliderLabelText: {
-    fontSize: 12,
-    color: MUTED,
-  },
-
-  metricStrong: {
-    color: TEXT,
-    fontWeight: "800",
-  },
+  budgetReadout: { fontSize: 16, fontWeight: "800", color: TEXT },
+  sliderLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },
+  sliderLabelText: { fontSize: 12, color: MUTED },
+  metricStrong: { color: TEXT, fontWeight: "800" },
 
   actionsRow: {
     marginTop: 26,
@@ -470,11 +415,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: ACCENT,
   },
-  primaryBtnText: {
-    color: "#fff",
-    fontWeight: "800",
-    fontSize: 16,
-  },
+  primaryBtnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
   ghostBtn: {
     minWidth: 150,
     alignItems: "center",
@@ -486,22 +427,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
   },
-  ghostBtnText: {
-    color: TEXT,
-    fontWeight: "800",
-    fontSize: 16,
-  },
+  ghostBtnText: { color: TEXT, fontWeight: "800", fontSize: 16 },
 
-  statusMsg: {
-    marginTop: 10,
-    textAlign: "center",
-    color: "#0f766e",
-    fontWeight: "700",
+  toast: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: "rgba(17,17,17,0.92)",
+    alignItems: "center",
   },
-  errorMsg: {
-    marginTop: 10,
-    textAlign: "center",
-    color: "#b91c1c",
-    fontWeight: "700",
-  },
+  toastText: { color: "#fff", fontWeight: "700" },
 });
+
