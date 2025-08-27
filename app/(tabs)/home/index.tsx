@@ -1,5 +1,5 @@
 // app/(tabs)/home/index.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { auth } from "../../../firebaseConfig";
+import { useFocusEffect } from "@react-navigation/native";
 import AppContainer from "../../../src/components/AppContainer";
 import RestaurantRecommendations from "../../../src/components/RestaurantRecommendations";
 import { fetchCityFromBackend, getLocationResilient } from "../../../src/utils/location";
@@ -20,22 +21,53 @@ const FALLBACK_IMG = require("../../../src/assets/images/2Eat-Logo.png");
 
 type Coords = { latitude: number; longitude: number };
 
+// Helper to compute preferred first name from Firebase user
+function nameFromUser(u: typeof auth.currentUser): string {
+  const n = u?.displayName?.trim();
+  if (n) return n.split(" ")[0];
+  const email = u?.email || "";
+  const base = email.split("@")[0];
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "there";
+}
+
 export default function HomeScreen() {
   const [coords, setCoords] = useState<Coords | null>(null);
   const [city, setCity] = useState<string | null>(null);
   const [locError, setLocError] = useState<string | null>(null);
 
-  const preferredName = useMemo(() => {
-    const u = auth.currentUser;
-    const n = u?.displayName?.trim();
-    if (n) return n.split(" ")[0];
-    const email = u?.email || "";
-    const base = email.split("@")[0];
-    return base ? base.charAt(0).toUpperCase() + base.slice(1) : "there";
+  // preferredName in state
+  const [preferredName, setPreferredName] = useState<string>(
+    nameFromUser(auth.currentUser)
+  );
+
+  // Update when Firebase auth user changes (sign-in/out, profile updates that trigger a change)
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((u) => {
+      setPreferredName(nameFromUser(u));
+    });
+    return unsub;
   }, []);
 
+  // Refresh user when this tab/screen gains focus (ensures we pick up displayName edits immediately)
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          await auth.currentUser?.reload();
+          if (!cancelled) setPreferredName(nameFromUser(auth.currentUser));
+        } catch {
+          // ignore
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
   (async () => {
     try {
