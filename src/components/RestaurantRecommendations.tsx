@@ -1,227 +1,289 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Text, View } from "react-native";
-import { auth } from "../../firebaseConfig";
+// src/components/RestaurantRecommendations.tsx
+// I own the recs session lifecycle here. Important changes:
+// - I only start ONE session per location snapshot (StrictMode-safe).
+// - startSession returns the new sessionId so I can immediately use it for /next.
+// - If /next says "bad/old session", I auto-restart once and retry (no spam).
+// - I always pass lat/lng to both /start and /next so distance + ranking stay correct.
 
-type Coords = { latitude: number; longitude: number };
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { auth } from "../../firebaseConfig";
 
 export type Restaurant = {
   id: string;
   name: string;
-  description?: string;
-  address?: string;
-  coords?: Coords | null;
-  priceLevel?: 1 | 2 | 3 | 4;
-  photoUrl?: string;
-  distance?: number; // km
+  address?: string | null;
+  priceLevel?: 0 | 1 | 2 | 3 | 4 | null;
+  distance?: number;     // km – backend fills this
+  photoUrl?: string | null;
+  primaryType?: string | null;
+  types?: string[];
 };
 
-type RenderProps = {
-  loading: boolean;
-  error: string | null;
-  items: Restaurant[];
-  index: number;
-  current: Restaurant | null;
-  like: () => void;
-  pass: () => void;
-  refresh: () => void;
-};
+type Coords = { latitude: number; longitude: number };
 
 type Props = {
   location: Coords | null;
-  children?: (props: RenderProps) => React.ReactNode;
-  /** override path if needed, e.g. "/api/recommendations/nearby" */
-  endpoint?: string;
+  children: (args: {
+    loading: boolean;
+    error: string | null;
+    current: Restaurant | null;
+    queue: Restaurant[];
+    like: () => Promise<void>;
+    pass: () => Promise<void>;
+    superStar: () => Promise<void>;
+    shouldMatchPrompt: boolean;
+    top3CandidateIds: string[];
+    superStarRestaurantId: string | null;
+    finalizeMatch: (winnerRestaurantId: string) => Promise<boolean>;
+    restart: () => Promise<void>;
+  }) => React.ReactNode;
 };
 
-/** Prefer env when available; falls back to prod domain */
-const BASE_URL =
-  (process.env.EXPO_PUBLIC_API_BASE_URL as string) || "https://2eatapp.com";
+// Central API root so I don’t sprinkle URLs around the app.
+const API_ROOT = "https://2eatapp.com/api";
 
-/** Haversine (km) as a fallback if backend doesn’t send distance */
-function computeDistanceKm(a?: Coords | null, b?: Coords | null): number | null {
-  if (!a || !b) return null;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const R = 6371;
-  const dLat = toRad(b.latitude - a.latitude);
-  const dLon = toRad(b.longitude - a.longitude);
-  const lat1 = toRad(a.latitude);
-  const lat2 = toRad(b.latitude);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+// Helper to attach Firebase ID token to every request.
+async function authedFetch(path: string, init?: RequestInit) {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error("no-auth");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+    ...(init?.headers as any),
+  };
+  return fetch(`${API_ROOT}${path}`, { ...init, headers });
 }
 
-export default function RestaurantRecommendations({
-  location,
-  children,
-  endpoint = "/api/location-info",
-}: Props) {
-  const [items, setItems] = useState<Restaurant[]>([]);
-  const [index, setIndex] = useState(0);
+export default function RestaurantRecommendations({ location, children }: Props) {
+  // Queue + current card
+  const [queue, setQueue] = useState<Restaurant[]>([]);
+  const [current, setCurrent] = useState<Restaurant | null>(null);
+
+  // Session + UI states
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const current = useMemo(
-    () => (items.length ? items[index % items.length] : null),
-    [items, index]
-  );
+  // Like / SuperStar bookkeeping so I can show the match modal locally
+  const [likes, setLikes] = useState<string[]>([]);
+  const [superStarId, setSuperStarId] = useState<string | null>(null);
 
-  async function fetchWithIdToken(url: string, signal: AbortSignal) {
-    const user = auth.currentUser;
-    if (!user) throw new Error("User not authenticated.");
+  // StrictMode / race guards
+  const startInFlight = useRef(false);           // prevents double /start
+  const bootKeyRef = useRef<string | null>(null); // tracks the last location snapshot I booted with
+  const retriedOnceRef = useRef(false);          // one-shot auto-recovery if /next fails/empties
+  const mountedRef = useRef(true);
 
-    // 1st try: current cached token
-    let token = await user.getIdToken();
-    let res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      cache: "no-store",
-      signal,
-    });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-    // If token is expired or rejected, force refresh once and retry
-    if (res.status === 401) {
-      token = await user.getIdToken(true);
-      res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        cache: "no-store",
-        signal,
-      });
-    }
-    return res;
-  }
+  // Derive "show match modal?" from how many likes we have
+  const shouldMatchPrompt = likes.length >= 15;
+  const top3CandidateIds = useMemo(() => likes.slice(0, 3), [likes]);
 
-  const fetchData = async () => {
-    if (!location) return;
+  // Keep current = queue[0]
+  useEffect(() => {
+    setCurrent(queue.length ? queue[0] : null);
+  }, [queue]);
 
-    // cancel any in-flight request
-    abortRef.current?.abort();
-    const abort = new AbortController();
-    abortRef.current = abort;
+  // I compute a stable “boot key” per location so I only start once per snapshot.
+  const bootKey = location ? `${location.latitude.toFixed(5)},${location.longitude.toFixed(5)}` : null;
+
+  // Start a session and return the *new* sessionId so I can immediately use it for /next.
+  const startSession = useCallback(async (): Promise<string | null> => {
+    if (!location) return null;
+    if (startInFlight.current) return sessionId; // already starting; reuse the last known id if any
 
     try {
+      startInFlight.current = true;
       setLoading(true);
       setError(null);
 
-      const url = `${BASE_URL}${endpoint}?lat=${location.latitude}&lng=${location.longitude}`;
-      const res = await fetchWithIdToken(url, abort.signal);
+      const r = await authedFetch("/recs/start", {
+        method: "POST",
+        body: JSON.stringify({
+          lat: location.latitude,
+          lng: location.longitude,
+          minPool: 100,
+        }),
+      });
+      if (!r.ok) throw new Error(`start ${r.status}`);
+      const json = await r.json();
+      const newId: string = json.sessionId;
 
-      if (!res.ok) {
-        // Try to extract backend error details
-        let msg = `Backend responded with ${res.status}`;
-        try {
-          const j = await res.json();
-          if (j?.error) msg = j.error;
-        } catch {}
-        throw new Error(msg);
+      // Reset my local state for a clean run.
+      if (mountedRef.current) {
+        setSessionId(newId);
+        setLikes([]);
+        setSuperStarId(null);
+        setQueue([]);
+        retriedOnceRef.current = false;
       }
 
-      const data = await res.json();
-      const raw: any[] =
-        data?.nearbyRestaurants ?? data?.restaurants ?? data ?? [];
-
-      const mapped: Restaurant[] = raw.map((r: any, i: number) => {
-        // Backend now sends normalized fields
-        const coords: Coords | undefined =
-          r?.latitude != null && r?.longitude != null
-            ? { latitude: r.latitude, longitude: r.longitude }
-            : undefined;
-
-        const dist =
-          typeof r?.distance === "number"
-            ? r.distance
-            : computeDistanceKm(location, coords ?? null) ?? undefined;
-
-        return {
-          id: String(r?.googlePlaceId ?? r?.id ?? r?.place_id ?? i),
-          name: r?.name ?? "Unknown spot",
-          description:
-            r?.editorialSummary ??
-            r?.description ??
-            r?.summary ??
-            undefined,
-          address: r?.formattedAddress ?? r?.address ?? r?.vicinity ?? undefined,
-          coords,
-          priceLevel:
-            typeof r?.priceLevel === "number" ? (r.priceLevel as 1 | 2 | 3 | 4) : undefined,
-          photoUrl: r?.photoUrl ?? r?.photo_url ?? r?.imageUrl ?? r?.image_url,
-          distance: dist,
-        };
-      });
-
-      // Optional: sort by distance if present
-      mapped.sort((a, b) => {
-        const da = a.distance ?? Number.POSITIVE_INFINITY;
-        const db = b.distance ?? Number.POSITIVE_INFINITY;
-        return da - db;
-      });
-
-      setItems(mapped);
-      setIndex(0);
+      return newId;
     } catch (e: any) {
-      if (e?.name === "AbortError") return;
-      console.error("Recommendations fetch error:", e);
-      setError(
-        e?.message ||
-          "Could not fetch dining suggestions. Please try again shortly."
-      );
+      if (mountedRef.current) setError(e?.message || "Could not start session");
+      return null;
     } finally {
-      setLoading(false);
+      startInFlight.current = false;
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [location, sessionId]);
 
+  // Fetch the next card. I allow passing a specific session to avoid stale-state races.
+  const fetchNext = useCallback(
+    async (explicitSessionId?: string) => {
+      if (!location) return;
+      const sid = explicitSessionId || sessionId;
+      if (!sid) return; // no valid session to use yet
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        const r = await authedFetch("/recs/next", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: sid,
+            lat: location.latitude,
+            lng: location.longitude,
+            limit: 1,
+          }),
+        });
+
+        // If the server signals bad session or missing params, I’ll do a one-shot restart.
+        if (r.status === 400 || r.status === 409) {
+          if (!retriedOnceRef.current) {
+            retriedOnceRef.current = true;
+            const newSid = await startSession();
+            if (newSid) await fetchNext(newSid);
+          }
+          return;
+        }
+
+        if (!r.ok) throw new Error(`next ${r.status}`);
+        const json = await r.json();
+        const items: Restaurant[] = json.items || [];
+
+        if (items.length === 0) {
+          // One-shot empty recovery (ranker hiccup or hydration race).
+          if (!retriedOnceRef.current) {
+            retriedOnceRef.current = true;
+            const newSid = await startSession();
+            if (newSid) await fetchNext(newSid);
+          }
+          return;
+        }
+
+        setQueue((q) => [...q, ...items]);
+      } catch (e: any) {
+        setError(e?.message || "Could not load suggestions.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [location, sessionId, startSession]
+  );
+
+  // Public: restart from the UI (e.g., after finishing a match or the user wants a fresh pool).
+  const restart = useCallback(async () => {
+    const newSid = await startSession();
+    if (newSid) await fetchNext(newSid);
+  }, [startSession, fetchNext]);
+
+  // On first usable location (or when location snapshot changes), I boot exactly once.
   useEffect(() => {
-    if (!location) return;
-    fetchData();
-    return () => abortRef.current?.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location?.latitude, location?.longitude, endpoint]);
+    (async () => {
+      if (!bootKey) return;
 
-  const like = () => setIndex((i) => i + 1);
-  const pass = () => setIndex((i) => i + 1);
-  const refresh = () => fetchData();
+      // StrictMode-safe: if we already booted for this location snapshot, do nothing.
+      if (bootKeyRef.current === bootKey) return;
+      bootKeyRef.current = bootKey;
 
-  const renderPayload: RenderProps = {
-    loading,
-    error,
-    items,
-    index,
-    current,
-    like,
-    pass,
-    refresh,
-  };
+      const newSid = await startSession();
+      if (newSid) await fetchNext(newSid);
+    })();
+  }, [bootKey, startSession, fetchNext]);
 
-  // Prefer render-prop rendering (Home controls the UI)
-  if (typeof children === "function") {
-    return <>{children(renderPayload)}</>;
-  }
+  // Send feedback and then pull the next card
+  const sendFeedback = useCallback(
+    async (action: "LIKE" | "PASS" | "SUPERSTAR") => {
+      const curr = current;
 
-  // Minimal RN fallback (debug)
-  if (!location) return null;
+      // Optimistic pop so the UI feels snappy
+      setQueue((q) => q.slice(1));
+
+      if (!curr || !sessionId) {
+        // No current/invalid session? Try to pull another silently.
+        const newSid = sessionId || (await startSession());
+        if (newSid) await fetchNext(newSid);
+        return;
+      }
+
+      try {
+        await authedFetch("/recs/feedback", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId,
+            restaurantId: curr.id,
+            action,
+          }),
+        });
+        if (action === "LIKE") setLikes((xs) => (xs.includes(curr.id) ? xs : [...xs, curr.id]));
+        if (action === "SUPERSTAR") setSuperStarId(curr.id);
+      } catch {
+        // Non-fatal – I still move forward
+      } finally {
+        await fetchNext(sessionId);
+      }
+    },
+    [current, sessionId, startSession, fetchNext]
+  );
+
+  const like = useCallback(async () => sendFeedback("LIKE"), [sendFeedback]);
+  const pass = useCallback(async () => sendFeedback("PASS"), [sendFeedback]);
+  const superStar = useCallback(async () => sendFeedback("SUPERSTAR"), [sendFeedback]);
+
+  const finalizeMatch = useCallback(
+    async (winnerRestaurantId: string) => {
+      if (!sessionId) return false;
+      try {
+        const top3 = likes.slice(0, 3);
+        const r = await authedFetch("/recs/finalize-match", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId,
+            top3,
+            winnerRestaurantId,
+            superStarRestaurantId: superStarId,
+          }),
+        });
+        return r.ok;
+      } catch {
+        return false;
+      }
+    },
+    [sessionId, likes, superStarId]
+  );
+
   return (
-    <View style={{ marginTop: 8 }}>
-      {error ? (
-        <Text style={{ color: "red" }}>{error}</Text>
-      ) : loading ? (
-        <Text>Loading restaurants…</Text>
-      ) : !items.length ? (
-        <Text>No suggestions found.</Text>
-      ) : (
-        items.map((r) => (
-          <Text key={r.id}>
-            • {r.name}
-            {typeof r.distance === "number" ? ` (${r.distance.toFixed(1)} km)` : ""}
-          </Text>
-        ))
-      )}
-    </View>
+    <>
+      {children({
+        loading,
+        error,
+        current,
+        queue,
+        like,
+        pass,
+        superStar,
+        shouldMatchPrompt,
+        top3CandidateIds,
+        superStarRestaurantId: superStarId,
+        finalizeMatch,
+        restart,
+      })}
+    </>
   );
 }
