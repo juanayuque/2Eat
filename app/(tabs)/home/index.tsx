@@ -82,7 +82,7 @@ const CUISINE_KEYWORDS: Record<string, string[]> = {
   mediterranean: ["mediterranean", "greek", "turkish", "lebanese"],
   "middle eastern": ["middle eastern", "lebanese", "turkish", "persian", "iranian"],
   spanish: ["spanish", "tapas"],
-  french: ["french", "bistro", "brasserie"],
+  french: ["french", "brasserie"],
   greek: ["greek"],
   turkish: ["turkish"],
   lebanese: ["lebanese"],

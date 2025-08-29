@@ -1,320 +1,384 @@
 // src/components/RestaurantRecommendations.tsx
-// Preserves original UX: current advances ONLY on user action or restart.
-// Adds excludeIds + sessionCompleted handling to prevent repeats & infinite sessions.
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "../../firebaseConfig";
+
+/* ───────────── Types ───────────── */
 
 export type Restaurant = {
   id: string;
   name: string;
   address?: string | null;
-  priceLevel?: 0 | 1 | 2 | 3 | 4 | null;
-  distance?: number;     // km – backend fills this
+  distance?: number | null;      // km
   photoUrl?: string | null;
   primaryType?: string | null;
-  types?: string[];
+  types?: string[] | null;
+  priceLevel?: number | null;    // 0..4
+  editorialSummary?: string | null;
+  editorial_summary?: string | null;
+  servesVegetarianFood?: boolean | null;
+  allowsDogs?: boolean | null;
+  hasParking?: boolean | null;
 };
 
 type Coords = { latitude: number; longitude: number };
 
+type FeedbackResp = {
+  ok: boolean;
+  shouldRerank?: boolean;
+  shouldSuggestMatch?: boolean;
+  sessionCompleted?: boolean;
+};
+
+type FinalizeResponse = {
+  ok?: boolean;
+  winner?: Restaurant | null;
+};
+
 type Props = {
-  location: Coords | null;
-  children: (args: {
+  location: Coords;
+  children: (ctx: {
     loading: boolean;
     error: string | null;
+
     current: Restaurant | null;
     queue: Restaurant[];
+
     like: () => Promise<void>;
     pass: () => Promise<void>;
     superStar: () => Promise<void>;
+
     shouldMatchPrompt: boolean;
-    top3CandidateIds: string[];
+    top3CandidateIds: string[];         // derived client-side from likes/queue
     superStarRestaurantId: string | null;
-    finalizeMatch: (winnerRestaurantId: string) => Promise<boolean>;
+
+    finalizeMatch: (id: string) => Promise<FinalizeResponse | null>;
     restart: () => Promise<void>;
   }) => React.ReactNode;
 };
 
-// Central API root so I don’t sprinkle URLs around the app.
-const API_ROOT = "https://2eatapp.com/api";
+/* ───────────── Config ───────────── */
 
-// Helper to attach Firebase ID token to every request.
+const API_BASE = "https://2eatapp.com";  // keep consistent with app
+const PAGE_SIZE = 8;                     // uses `limit` on /recs/next
+const MIN_QUEUE = 2;                     // keep queue topped up for snappy UX
+
+/* ───────────── Helpers ───────────── */
+
 async function authedFetch(path: string, init?: RequestInit) {
   const token = await auth.currentUser?.getIdToken();
-  if (!token) throw new Error("no-auth");
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-    ...(init?.headers as any),
-  };
-  return fetch(`${API_ROOT}${path}`, { ...init, headers });
+  const headers = new Headers(init?.headers || {});
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!headers.has("Content-Type") && init?.body) headers.set("Content-Type", "application/json");
+  const res = await fetch(`${API_BASE}/api${path}`, { ...init, headers });
+  return res;
 }
 
-export default function RestaurantRecommendations({ location, children }: Props) {
-  // Queue + current card
-  const [queue, setQueue] = useState<Restaurant[]>([]);
-  const [current, setCurrent] = useState<Restaurant | null>(null);
+/* ───────────── Component ───────────── */
 
-  // Session + UI states
+export default function RestaurantRecommendations({ location, children }: Props) {
+  // Session
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Presentation state
+  const [current, setCurrent] = useState<Restaurant | null>(null);
+  const [queue, setQueue] = useState<Restaurant[]>([]);
+  const likesRef = useRef<string[]>([]);
+  const [superStarRestaurantId, setSuperStarRestaurantId] = useState<string | null>(null);
+
+  // UI flags
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shouldMatchPrompt, setShouldMatchPrompt] = useState(false);
 
-  // Like / SuperStar bookkeeping so I can show the match modal locally
-  const [likes, setLikes] = useState<string[]>([]);
-  const [superStarId, setSuperStarId] = useState<string | null>(null);
-
-  // StrictMode / race guards
-  const startInFlight = useRef(false);            // prevents double /start
-  const bootKeyRef = useRef<string | null>(null); // tracks location snapshot I booted with
-  const retriedOnceRef = useRef(false);           // one-shot auto-recovery if /next fails/empties
+  // lifecycle guards
   const mountedRef = useRef(true);
+  const startInFlight = useRef<Promise<string | null> | null>(null);
+  const nextInFlight = useRef<Promise<void> | null>(null);
+  const feedbackBusy = useRef(false);
 
-  // Repeat prevention (server also dedupes with excludeIds; we keep a tiny local history)
-  const recentSeenRef = useRef<string[]>([]);     // tail of seen/current ids
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
-  // Session cap from server
-  const [sessionCompleted, setSessionCompleted] = useState(false);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  // Derive "show match modal?"
-  const shouldMatchPrompt = sessionCompleted || likes.length >= 15;
-  const top3CandidateIds = useMemo(() => likes.slice(0, 3), [likes]);
-
-  // Keep current = queue[0]. This is why the card NEVER advances unless we mutate the queue.
-  useEffect(() => {
-    setCurrent(queue.length ? queue[0] : null);
-  }, [queue]);
-
-  // Stable “boot key” per location so we only start once per snapshot (StrictMode-safe).
-  const bootKey = location ? `${location.latitude.toFixed(5)},${location.longitude.toFixed(5)}` : null;
-
-  // Start a session and return the new sessionId so we can immediately use it for /next.
-  const startSession = useCallback(async (): Promise<string | null> => {
-    if (!location) return null;
-    if (startInFlight.current) return sessionId; // already starting; reuse last known
-
-    try {
-      startInFlight.current = true;
-      setLoading(true);
-      setError(null);
-
-      const r = await authedFetch("/recs/start", {
-        method: "POST",
-        body: JSON.stringify({
-          lat: location.latitude,
-          lng: location.longitude,
-          minPool: 100,
-        }),
-      });
-      if (!r.ok) throw new Error(`start ${r.status}`);
-      const json = await r.json();
-      const newId: string = json.sessionId;
-
-      if (mountedRef.current) {
-        setSessionId(newId);
-        setLikes([]);
-        setSuperStarId(null);
-        setQueue([]);
-        setSessionCompleted(false);
-        recentSeenRef.current = [];
-        retriedOnceRef.current = false;
-      }
-
-      return newId;
-    } catch (e: any) {
-      if (mountedRef.current) setError(e?.message || "Could not start session");
-      return null;
-    } finally {
-      startInFlight.current = false;
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [location, sessionId]);
-
-  // Helper to build excludeIds for /next to prevent repeats while feedback is in flight.
+  /* Build a small client-side “exclude list” so /next doesn’t send
+     items we’re already showing or prefetched locally. The server
+     already excludes swiped items. */
   const buildExcludeIds = useCallback(() => {
     const s = new Set<string>();
     if (current?.id) s.add(current.id);
     for (const q of queue) if (q?.id) s.add(q.id);
-    for (const id of recentSeenRef.current.slice(-30)) s.add(id);
     return Array.from(s);
-  }, [current, queue]);
+  }, [current?.id, queue]);
 
-  // Fetch the next card(s). We never mutate `current` here — only append to `queue`.
-  const fetchNext = useCallback(
-    async (explicitSessionId?: string, limit = 1) => {
-      if (!location) return;
-      const sid = explicitSessionId || sessionId;
-      if (!sid || sessionCompleted) return;
+  const promoteNext = useCallback(() => {
+    setQueue((prev) => {
+      if (prev.length === 0) {
+        setCurrent(null);
+        return prev;
+      }
+      const [head, ...rest] = prev;
+      setCurrent(head);
+      return rest;
+    });
+  }, []);
 
+  /* ───────────── Session start/reset ───────────── */
+
+  const startSession = useCallback(async (): Promise<string | null> => {
+    if (startInFlight.current) return startInFlight.current;
+
+    const task = (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        setLoading(true);
-        setError(null);
-
-        const r = await authedFetch("/recs/next", {
+        const res = await authedFetch("/recs/start", {
           method: "POST",
           body: JSON.stringify({
-            sessionId: sid,
             lat: location.latitude,
             lng: location.longitude,
-            limit,
+            minPool: 100,
+          }),
+        });
+        if (!res.ok) throw new Error(`start ${res.status}`);
+        const json = await res.json();
+        const newId: string = json.sessionId;
+
+        if (mountedRef.current) {
+          setSessionId(newId);
+          setCurrent(null);
+          setQueue([]);
+          setShouldMatchPrompt(false);
+          likesRef.current = [];
+          setSuperStarRestaurantId(null);
+        }
+        return newId;
+      } catch (e: any) {
+        if (mountedRef.current) setError(e?.message || "Could not start session");
+        return null;
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    })();
+
+    startInFlight.current = task.finally(() => { startInFlight.current = null; });
+    return task;
+  }, [location.latitude, location.longitude]);
+
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (sessionId) return sessionId;
+    return startSession();
+  }, [sessionId, startSession]);
+
+  const restart = useCallback(async () => {
+    const id = await startSession();
+    if (id && mountedRef.current) {
+      await fetchMore(true);
+    }
+  }, [startSession]);
+
+  /* ───────────── Fetch next page ───────────── */
+
+  const fetchMore = useCallback(async (force = false) => {
+    if (nextInFlight.current) return nextInFlight.current;
+    if (!force && queue.length >= MIN_QUEUE) return;
+
+    const task = (async () => {
+      const id = await ensureSession();
+      if (!id) return;
+
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await authedFetch("/recs/next", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: id,
+            lat: location.latitude,
+            lng: location.longitude,
+            limit: PAGE_SIZE,
             excludeIds: buildExcludeIds(),
           }),
         });
+        if (!res.ok) throw new Error(`next ${res.status}`);
+        const json = await res.json();
+        const items: Restaurant[] = Array.isArray(json.items) ? json.items : [];
 
-        // Bad/old session → one-shot restart
-        if (r.status === 400 || r.status === 409) {
-          if (!retriedOnceRef.current) {
-            retriedOnceRef.current = true;
-            const newSid = await startSession();
-            if (newSid) await fetchNext(newSid, limit);
+        if (!mountedRef.current) return;
+        setQueue((prev) => {
+          const combined = prev.concat(items);
+          if (!current && combined.length > 0) {
+            const [head, ...rest] = combined;
+            setCurrent(head);
+            return rest;
           }
-          return;
-        }
-
-        if (!r.ok) throw new Error(`next ${r.status}`);
-        const json = await r.json();
-
-        if (json?.sessionCompleted) {
-          setSessionCompleted(true);
-          return;
-        }
-
-        const items: Restaurant[] = json.items || [];
-        if (items.length === 0) {
-          // One-shot empty recovery (ranker hiccup or hydration race).
-          if (!retriedOnceRef.current) {
-            retriedOnceRef.current = true;
-            const newSid = await startSession();
-            if (newSid) await fetchNext(newSid, limit);
-          }
-          return;
-        }
-
-        setQueue((q) => [...q, ...items]);
+          return combined;
+        });
       } catch (e: any) {
-        setError(e?.message || "Could not load suggestions.");
+        if (mountedRef.current) setError(e?.message || "Could not load more suggestions");
       } finally {
-        setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
-    },
-    [location, sessionId, sessionCompleted, startSession, buildExcludeIds]
-  );
+    })();
 
-  // Public: restart from the UI (e.g., after finishing a match or the user wants a fresh pool).
-  const restart = useCallback(async () => {
-    const newSid = await startSession();
-    if (newSid) await fetchNext(newSid, 1);
-  }, [startSession, fetchNext]);
+    nextInFlight.current = task.finally(() => { nextInFlight.current = null; });
+    return task;
+  }, [ensureSession, location.latitude, location.longitude, buildExcludeIds, current, queue.length]);
 
-  // Boot exactly once per location snapshot.
   useEffect(() => {
     (async () => {
-      if (!bootKey) return;
-      if (bootKeyRef.current === bootKey) return; // already booted for this snapshot
-      bootKeyRef.current = bootKey;
-
-      const newSid = await startSession();
-      if (newSid) await fetchNext(newSid, 1);
-    })();
-  }, [bootKey, startSession, fetchNext]);
-
-  // Send feedback → pop current → fetch one more for the tail of the queue.
-  const sendFeedback = useCallback(
-    async (action: "LIKE" | "PASS" | "SUPERSTAR") => {
-      const curr = current;
-
-      // Optimistic pop so the UI feels snappy (this is the ONLY place we advance the card)
-      setQueue((q) => q.slice(1));
-
-      if (!curr || !sessionId) {
-        // No current/invalid session? Try to pull another silently.
-        const newSid = sessionId || (await startSession());
-        if (newSid) await fetchNext(newSid, 1);
-        return;
+      if (!location) return;
+      if (!sessionId) {
+        await restart();
+      } else {
+        await fetchMore();
       }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.latitude, location.longitude]);
+
+  useEffect(() => {
+    if (sessionId && queue.length < MIN_QUEUE) {
+      void fetchMore();
+    }
+  }, [sessionId, queue.length, fetchMore]);
+
+  /* ───────────── Feedback (LIKE / PASS / SUPERSTAR) ───────────── */
+
+  const sendFeedback = useCallback(
+    async (actionUpper: "LIKE" | "PASS" | "SUPERSTAR") => {
+      if (feedbackBusy.current) return;
+      if (!current?.id) return;
+
+      feedbackBusy.current = true;
+      setError(null);
 
       try {
-        // Track recent to avoid echo if /next races /feedback
-        recentSeenRef.current.push(curr.id);
-        if (recentSeenRef.current.length > 60) {
-          recentSeenRef.current = recentSeenRef.current.slice(-60);
+        const id = await ensureSession();
+        if (!id) throw new Error("no session");
+
+        // optimistic client-side bookkeeping
+        if (actionUpper === "LIKE") {
+          likesRef.current = [...likesRef.current, current.id];
+        }
+        if (actionUpper === "SUPERSTAR") {
+          setSuperStarRestaurantId(current.id);
         }
 
-        const r = await authedFetch("/recs/feedback", {
+        const res = await authedFetch("/recs/feedback", {
           method: "POST",
           body: JSON.stringify({
-            sessionId,
-            restaurantId: curr.id,
-            action, // server normalizes, but we send uppercase
+            sessionId: id,
+            restaurantId: current.id,
+            action: actionUpper, // server expects uppercase
           }),
         });
 
-        if (!r.ok) {
-          // Non-fatal – we still move forward
-        } else {
-          const j = await r.json().catch(() => null);
-          if (j?.sessionCompleted) setSessionCompleted(true);
-          if (action === "LIKE") setLikes((xs) => (xs.includes(curr.id) ? xs : [...xs, curr.id]));
-          if (action === "SUPERSTAR") setSuperStarId(curr.id);
+        let resp: FeedbackResp | null = null;
+        try { resp = await res.json(); } catch {}
+        if (!res.ok) throw new Error(resp?.error || `feedback ${res.status}`);
+
+        // server tells us when to prompt
+        if (mountedRef.current) {
+          const prompt = Boolean(resp?.shouldSuggestMatch || resp?.sessionCompleted);
+          if (prompt) setShouldMatchPrompt(true);
         }
-      } catch {
-        // ignore; we still fetch another suggestion
+
+        // advance UI and keep prefetching
+        promoteNext();
+        void fetchMore();
+      } catch (e: any) {
+        if (mountedRef.current) setError(e?.message || "Could not submit feedback");
       } finally {
-        await fetchNext(sessionId, 1);
+        feedbackBusy.current = false;
       }
     },
-    [current, sessionId, startSession, fetchNext]
+    [current?.id, ensureSession, promoteNext, fetchMore]
   );
 
   const like = useCallback(async () => sendFeedback("LIKE"), [sendFeedback]);
   const pass = useCallback(async () => sendFeedback("PASS"), [sendFeedback]);
   const superStar = useCallback(async () => sendFeedback("SUPERSTAR"), [sendFeedback]);
 
+  /* ───────────── Finalize ───────────── */
+
+  const top3CandidateIds = useMemo(() => {
+    // Prefer last 3 likes (most recent first), else fall back to current+queue
+    const liked = likesRef.current.slice(-3).reverse();
+    if (liked.length === 3) return liked;
+    const fill: string[] = [];
+    if (current?.id) fill.push(current.id);
+    for (const q of queue) {
+      if (fill.length >= 3) break;
+      if (q?.id && !fill.includes(q.id) && !liked.includes(q.id)) fill.push(q.id);
+    }
+    return [...liked, ...fill].slice(0, 3);
+  }, [current?.id, queue]);
+
   const finalizeMatch = useCallback(
-    async (winnerRestaurantId: string) => {
-      if (!sessionId) return false;
+    async (winnerId: string): Promise<FinalizeResponse | null> => {
       try {
-        const top3 = likes.slice(0, 3);
-        const r = await authedFetch("/recs/finalize-match", {
+        const id = await ensureSession();
+        if (!id) throw new Error("no session");
+
+        const res = await authedFetch("/recs/finalize-match", {
           method: "POST",
           body: JSON.stringify({
-            sessionId,
-            top3,
-            winnerRestaurantId,
-            superStarRestaurantId: superStarId,
+            sessionId: id,
+            top3: top3CandidateIds,
+            winnerRestaurantId: winnerId,
+            superStarRestaurantId: superStarRestaurantId,
           }),
         });
-        if (r.ok) setSessionCompleted(true);
-        return r.ok;
-      } catch {
-        return false;
+        if (!res.ok) throw new Error(`finalize ${res.status}`);
+        const json: FinalizeResponse = await res.json();
+
+        // After finalize, the session is completed server-side.
+        if (mountedRef.current) {
+          setShouldMatchPrompt(false);
+        }
+        return json;
+      } catch (e: any) {
+        if (mountedRef.current) setError(e?.message || "Could not finalize match");
+        return null;
       }
     },
-    [sessionId, likes, superStarId]
+    [ensureSession, top3CandidateIds, superStarRestaurantId]
   );
 
-  return (
-    <>
-      {children({
-        loading,
-        error,
-        current,
-        queue,
-        like,
-        pass,
-        superStar,
-        shouldMatchPrompt,
-        top3CandidateIds,
-        superStarRestaurantId: superStarId,
-        finalizeMatch,
-        restart,
-      })}
-    </>
+  /* ───────────── Expose to children ───────────── */
+
+  const ctx = useMemo(
+    () => ({
+      loading,
+      error,
+
+      current,
+      queue,
+
+      like,
+      pass,
+      superStar,
+
+      shouldMatchPrompt,
+      top3CandidateIds,
+      superStarRestaurantId,
+
+      finalizeMatch,
+      restart,
+    }),
+    [
+      loading,
+      error,
+      current,
+      queue,
+      like,
+      pass,
+      superStar,
+      shouldMatchPrompt,
+      top3CandidateIds,
+      superStarRestaurantId,
+      finalizeMatch,
+      restart,
+    ]
   );
+
+  return <>{children(ctx)}</>;
 }
