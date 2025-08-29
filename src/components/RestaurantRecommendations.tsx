@@ -1,9 +1,6 @@
 // src/components/RestaurantRecommendations.tsx
-// I own the recs session lifecycle here. Important changes:
-// - I only start ONE session per location snapshot (StrictMode-safe).
-// - startSession returns the new sessionId so I can immediately use it for /next.
-// - If /next says "bad/old session", I auto-restart once and retry (no spam).
-// - I always pass lat/lng to both /start and /next so distance + ranking stay correct.
+// Preserves original UX: current advances ONLY on user action or restart.
+// Adds excludeIds + sessionCompleted handling to prevent repeats & infinite sessions.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "../../firebaseConfig";
@@ -69,32 +66,38 @@ export default function RestaurantRecommendations({ location, children }: Props)
   const [superStarId, setSuperStarId] = useState<string | null>(null);
 
   // StrictMode / race guards
-  const startInFlight = useRef(false);           // prevents double /start
-  const bootKeyRef = useRef<string | null>(null); // tracks the last location snapshot I booted with
-  const retriedOnceRef = useRef(false);          // one-shot auto-recovery if /next fails/empties
+  const startInFlight = useRef(false);            // prevents double /start
+  const bootKeyRef = useRef<string | null>(null); // tracks location snapshot I booted with
+  const retriedOnceRef = useRef(false);           // one-shot auto-recovery if /next fails/empties
   const mountedRef = useRef(true);
+
+  // Repeat prevention (server also dedupes with excludeIds; we keep a tiny local history)
+  const recentSeenRef = useRef<string[]>([]);     // tail of seen/current ids
+
+  // Session cap from server
+  const [sessionCompleted, setSessionCompleted] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Derive "show match modal?" from how many likes we have
-  const shouldMatchPrompt = likes.length >= 15;
+  // Derive "show match modal?"
+  const shouldMatchPrompt = sessionCompleted || likes.length >= 15;
   const top3CandidateIds = useMemo(() => likes.slice(0, 3), [likes]);
 
-  // Keep current = queue[0]
+  // Keep current = queue[0]. This is why the card NEVER advances unless we mutate the queue.
   useEffect(() => {
     setCurrent(queue.length ? queue[0] : null);
   }, [queue]);
 
-  // I compute a stable “boot key” per location so I only start once per snapshot.
+  // Stable “boot key” per location so we only start once per snapshot (StrictMode-safe).
   const bootKey = location ? `${location.latitude.toFixed(5)},${location.longitude.toFixed(5)}` : null;
 
-  // Start a session and return the *new* sessionId so I can immediately use it for /next.
+  // Start a session and return the new sessionId so we can immediately use it for /next.
   const startSession = useCallback(async (): Promise<string | null> => {
     if (!location) return null;
-    if (startInFlight.current) return sessionId; // already starting; reuse the last known id if any
+    if (startInFlight.current) return sessionId; // already starting; reuse last known
 
     try {
       startInFlight.current = true;
@@ -113,12 +116,13 @@ export default function RestaurantRecommendations({ location, children }: Props)
       const json = await r.json();
       const newId: string = json.sessionId;
 
-      // Reset my local state for a clean run.
       if (mountedRef.current) {
         setSessionId(newId);
         setLikes([]);
         setSuperStarId(null);
         setQueue([]);
+        setSessionCompleted(false);
+        recentSeenRef.current = [];
         retriedOnceRef.current = false;
       }
 
@@ -132,12 +136,21 @@ export default function RestaurantRecommendations({ location, children }: Props)
     }
   }, [location, sessionId]);
 
-  // Fetch the next card. I allow passing a specific session to avoid stale-state races.
+  // Helper to build excludeIds for /next to prevent repeats while feedback is in flight.
+  const buildExcludeIds = useCallback(() => {
+    const s = new Set<string>();
+    if (current?.id) s.add(current.id);
+    for (const q of queue) if (q?.id) s.add(q.id);
+    for (const id of recentSeenRef.current.slice(-30)) s.add(id);
+    return Array.from(s);
+  }, [current, queue]);
+
+  // Fetch the next card(s). We never mutate `current` here — only append to `queue`.
   const fetchNext = useCallback(
-    async (explicitSessionId?: string) => {
+    async (explicitSessionId?: string, limit = 1) => {
       if (!location) return;
       const sid = explicitSessionId || sessionId;
-      if (!sid) return; // no valid session to use yet
+      if (!sid || sessionCompleted) return;
 
       try {
         setLoading(true);
@@ -149,30 +162,36 @@ export default function RestaurantRecommendations({ location, children }: Props)
             sessionId: sid,
             lat: location.latitude,
             lng: location.longitude,
-            limit: 1,
+            limit,
+            excludeIds: buildExcludeIds(),
           }),
         });
 
-        // If the server signals bad session or missing params, I’ll do a one-shot restart.
+        // Bad/old session → one-shot restart
         if (r.status === 400 || r.status === 409) {
           if (!retriedOnceRef.current) {
             retriedOnceRef.current = true;
             const newSid = await startSession();
-            if (newSid) await fetchNext(newSid);
+            if (newSid) await fetchNext(newSid, limit);
           }
           return;
         }
 
         if (!r.ok) throw new Error(`next ${r.status}`);
         const json = await r.json();
-        const items: Restaurant[] = json.items || [];
 
+        if (json?.sessionCompleted) {
+          setSessionCompleted(true);
+          return;
+        }
+
+        const items: Restaurant[] = json.items || [];
         if (items.length === 0) {
           // One-shot empty recovery (ranker hiccup or hydration race).
           if (!retriedOnceRef.current) {
             retriedOnceRef.current = true;
             const newSid = await startSession();
-            if (newSid) await fetchNext(newSid);
+            if (newSid) await fetchNext(newSid, limit);
           }
           return;
         }
@@ -184,59 +203,70 @@ export default function RestaurantRecommendations({ location, children }: Props)
         setLoading(false);
       }
     },
-    [location, sessionId, startSession]
+    [location, sessionId, sessionCompleted, startSession, buildExcludeIds]
   );
 
   // Public: restart from the UI (e.g., after finishing a match or the user wants a fresh pool).
   const restart = useCallback(async () => {
     const newSid = await startSession();
-    if (newSid) await fetchNext(newSid);
+    if (newSid) await fetchNext(newSid, 1);
   }, [startSession, fetchNext]);
 
-  // On first usable location (or when location snapshot changes), I boot exactly once.
+  // Boot exactly once per location snapshot.
   useEffect(() => {
     (async () => {
       if (!bootKey) return;
-
-      // StrictMode-safe: if we already booted for this location snapshot, do nothing.
-      if (bootKeyRef.current === bootKey) return;
+      if (bootKeyRef.current === bootKey) return; // already booted for this snapshot
       bootKeyRef.current = bootKey;
 
       const newSid = await startSession();
-      if (newSid) await fetchNext(newSid);
+      if (newSid) await fetchNext(newSid, 1);
     })();
   }, [bootKey, startSession, fetchNext]);
 
-  // Send feedback and then pull the next card
+  // Send feedback → pop current → fetch one more for the tail of the queue.
   const sendFeedback = useCallback(
     async (action: "LIKE" | "PASS" | "SUPERSTAR") => {
       const curr = current;
 
-      // Optimistic pop so the UI feels snappy
+      // Optimistic pop so the UI feels snappy (this is the ONLY place we advance the card)
       setQueue((q) => q.slice(1));
 
       if (!curr || !sessionId) {
         // No current/invalid session? Try to pull another silently.
         const newSid = sessionId || (await startSession());
-        if (newSid) await fetchNext(newSid);
+        if (newSid) await fetchNext(newSid, 1);
         return;
       }
 
       try {
-        await authedFetch("/recs/feedback", {
+        // Track recent to avoid echo if /next races /feedback
+        recentSeenRef.current.push(curr.id);
+        if (recentSeenRef.current.length > 60) {
+          recentSeenRef.current = recentSeenRef.current.slice(-60);
+        }
+
+        const r = await authedFetch("/recs/feedback", {
           method: "POST",
           body: JSON.stringify({
             sessionId,
             restaurantId: curr.id,
-            action,
+            action, // server normalizes, but we send uppercase
           }),
         });
-        if (action === "LIKE") setLikes((xs) => (xs.includes(curr.id) ? xs : [...xs, curr.id]));
-        if (action === "SUPERSTAR") setSuperStarId(curr.id);
+
+        if (!r.ok) {
+          // Non-fatal – we still move forward
+        } else {
+          const j = await r.json().catch(() => null);
+          if (j?.sessionCompleted) setSessionCompleted(true);
+          if (action === "LIKE") setLikes((xs) => (xs.includes(curr.id) ? xs : [...xs, curr.id]));
+          if (action === "SUPERSTAR") setSuperStarId(curr.id);
+        }
       } catch {
-        // Non-fatal – I still move forward
+        // ignore; we still fetch another suggestion
       } finally {
-        await fetchNext(sessionId);
+        await fetchNext(sessionId, 1);
       }
     },
     [current, sessionId, startSession, fetchNext]
@@ -260,6 +290,7 @@ export default function RestaurantRecommendations({ location, children }: Props)
             superStarRestaurantId: superStarId,
           }),
         });
+        if (r.ok) setSessionCompleted(true);
         return r.ok;
       } catch {
         return false;

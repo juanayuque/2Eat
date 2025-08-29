@@ -1,7 +1,8 @@
 // app/(tabs)/list/index.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Image,
   Modal,
@@ -12,6 +13,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { auth } from "../../../firebaseConfig";
 import AppContainer from "../../../src/components/AppContainer";
 
@@ -50,9 +52,20 @@ export default function List() {
   const [open, setOpen] = useState<MatchItem | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  async function fetchMatches() {
+  // Toast
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    Animated.sequence([
+      Animated.timing(toastOpacity, { toValue: 1, duration: 160, useNativeDriver: true }),
+      Animated.delay(1500),
+      Animated.timing(toastOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => setToastMsg(null));
+  };
+
+  const fetchMatches = useCallback(async () => {
     try {
       setLoading(true);
       setErr(null);
@@ -69,12 +82,17 @@ export default function List() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { fetchMatches(); }, []);
+  // Refresh on first mount AND whenever this screen regains focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchMatches();
+    }, [fetchMatches])
+  );
 
+  // Keep draft synced with the opened item
   useEffect(() => {
-    setSaveMsg(null);
     if (open) setCommentDraft(open.userComment || "");
   }, [open?.id]);
 
@@ -92,7 +110,6 @@ export default function List() {
     if (!open) return;
     try {
       setSaving(true);
-      setSaveMsg(null);
       const token = await auth.currentUser?.getIdToken();
       const r = await fetch(`${API_BASE}/api/matches/${open.id}/comment`, {
         method: "PUT",
@@ -104,13 +121,17 @@ export default function List() {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { userComment } = await r.json();
+
       // reflect in local list
       setMatches((prev) =>
         prev.map((m) => (m.id === open.id ? { ...m, userComment } : m))
       );
-      setSaveMsg("Saved ✓");
+
+      // close modal + toast
+      setOpen(null);
+      showToast("Saved ✓");
     } catch (e: any) {
-      setSaveMsg("Could not save");
+      showToast("Could not save");
     } finally {
       setSaving(false);
     }
@@ -184,7 +205,6 @@ export default function List() {
             contentContainerStyle={{ paddingBottom: 110, paddingTop: 6 }}
             ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
             showsVerticalScrollIndicator={false}
-            // Remove overscroll glow/edge on Android (prevents the “grey” edge)
             overScrollMode="never"
           />
         )}
@@ -207,7 +227,6 @@ export default function List() {
                     {!!open.top2 && <Slot label="#2" r={open.top2} small />}
                     {!!open.top3 && <Slot label="#3" r={open.top3} small />}
                   </View>
-                  {/* Show Super Star ONLY if present */}
                   {!!open.superStar && <Slot label="Super Star" r={open.superStar} />}
 
                   {/* Comment box (DB-backed) */}
@@ -225,7 +244,6 @@ export default function List() {
                       <Pressable disabled={saving} onPress={saveComment} style={[styles.saveBtn, saving && { opacity: 0.8 }]}>
                         <Text style={styles.saveBtnText}>{saving ? "Saving…" : "Save"}</Text>
                       </Pressable>
-                      {!!saveMsg && <Text style={styles.savedHint}>{saveMsg}</Text>}
                     </View>
                   </View>
                 </View>
@@ -233,6 +251,29 @@ export default function List() {
             </View>
           </View>
         </Modal>
+
+        {/* Toast */}
+        {toastMsg && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.toast,
+              {
+                opacity: toastOpacity,
+                transform: [
+                  {
+                    translateY: toastOpacity.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [10, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Text style={styles.toastText}>{toastMsg}</Text>
+          </Animated.View>
+        )}
       </View>
     </AppContainer>
   );
@@ -275,7 +316,7 @@ function Slot({ label, r, small = false }: { label: string; r: Resto | null; sma
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#fff",      // match Home tab
+    backgroundColor: "#fff",
     padding: 16,
     paddingBottom: 110,
   },
@@ -296,7 +337,7 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e5e5ea", // subtle like Home
+    borderColor: "#e5e5ea",
     backgroundColor: "#f7f7f8",
     shadowColor: "#000",
     shadowOpacity: 0.06,
@@ -395,7 +436,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#4f46e5",
   },
   saveBtnText: { color: "#fff", fontWeight: "800" },
-  savedHint: { color: "#111" },
 
   ghostBtn: {
     marginTop: 8,
@@ -406,4 +446,19 @@ const styles = StyleSheet.create({
     borderColor: "#e5e5ea",
   },
   ghostBtnText: { color: "#111", fontWeight: "800" },
+
+  // Toast
+  toast: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 100,
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: "rgba(17,17,17,0.92)",
+    alignItems: "center",
+  },
+  toastText: { color: "#fff", fontWeight: "700" },
 });

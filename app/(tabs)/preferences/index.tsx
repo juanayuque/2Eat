@@ -26,16 +26,11 @@ const MUTED = "#666";
 const CUISINE_OPTIONS = [
   "Italian","Chinese","Indian","Thai","Japanese","Mexican","American",
   "Mediterranean","Middle Eastern","French","Korean","Vietnamese",
-  "Spanish","Greek","BBQ","Burgers","Seafood","Sushi", "Fast Food"
+  "Spanish","Greek","Turkish","Lebanese", "Fast Food"
 ];
 
 const DIET_OPTIONS = [
-  "Vegetarian",
-  "Vegan",
-  "Gluten-free",
-  "Dairy-free",
-  "Halal",
-  "Kosher",
+  "Vegetarian", 'Pet Friendly', 'Parking'
 ];
 
 const DISTANCE_OPTIONS = [2, 5, 10, 20] as const;
@@ -179,8 +174,8 @@ export default function Preferences() {
           </View>
         </Section>
 
-        <Section title="🥦 Diet">
-          <Text style={styles.hint}>Optional dietary needs</Text>
+        <Section title="✨ Requirements ✨">
+          <Text style={styles.hint}>Must have on my selections</Text>
           <View style={styles.pillWrap}>
             {DIET_OPTIONS.map((d) => (
               <Pill
