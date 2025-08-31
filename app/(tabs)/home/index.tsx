@@ -23,16 +23,10 @@ import {
 } from "../../../src/utils/location";
 
 const API_BASE = "https://2eatapp.com";
+const DISCOVER_ENDPOINT = `${API_BASE}/api/recs/discover-now`;
 const FALLBACK_IMG = require("../../../src/assets/images/2Eat-Logo.png");
 
 type Coords = { latitude: number; longitude: number };
-
-function nameFromUser(u: typeof auth.currentUser): string {
-  const n = u?.displayName?.trim();
-  if (n) return n.split(" ")[0];
-  const email = u?.email || "";
-  const base = email.split("@")[0];
-  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "You";}
 
 function fallbackName(u: any) {
   const n = u?.displayName?.trim();
@@ -43,7 +37,7 @@ function fallbackName(u: any) {
 
 async function authedHeaders() {
   const t = await auth.currentUser?.getIdToken(true);
-  return { Authorization: `Bearer ${t}` };
+  return { Authorization: `Bearer ${t}`, "Content-Type": "application/json" };
 }
 
 function initialsFromUser(u: typeof auth.currentUser): string {
@@ -60,12 +54,10 @@ function initialsFromUser(u: typeof auth.currentUser): string {
 function HeroImage({ uri, altKey }: { uri?: string | null; altKey: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [uri]);
-
   const source = useMemo(() => {
     if (!uri || failed) return FALLBACK_IMG;
     return { uri };
   }, [uri, failed]);
-
   return (
     <Image
       key={uri ? `${altKey}:${uri}` : `fallback:${altKey}`}
@@ -117,7 +109,6 @@ function primaryReadable(pt?: string | null) {
   return pt.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// first-hit helper (kept for the Type line)
 function highlightParts(source: string, keyword: string) {
   const idx = source.toLowerCase().indexOf(keyword.toLowerCase());
   if (idx < 0) return [{ text: source, hit: false }];
@@ -128,7 +119,6 @@ function highlightParts(source: string, keyword: string) {
   ];
 }
 
-// highlight ALL occurrences (used for editorial summary)
 function highlightAllParts(source: string, keyword: string) {
   if (!keyword) return [{ text: source, hit: false }];
   const lower = source.toLowerCase();
@@ -149,44 +139,9 @@ function highlightAllParts(source: string, keyword: string) {
   return out;
 }
 
-function findMatchedKeyword(
-  r: any,
-  userPrefs: string[]
-): { keyword: string | null; inWhere: "summary" | "type" | null } {
-  if (!r) return { keyword: null, inWhere: null };
-  const needles = expandUserCuisineKeywords(userPrefs);
-  if (!needles.length) return { keyword: null, inWhere: null };
 
-  const summary = String(r?.editorial_summary || r?.editorialSummary || "");
-  const primary = String(r?.primaryType || "");
-  const types: string[] = Array.isArray(r?.types) ? r.types.map(String) : [];
-  const primaryDN = String(r?.primaryTypeDisplayName || r?.name || "");
-
-  for (const k of needles) {
-    if (summary.toLowerCase().includes(k.toLowerCase())) return { keyword: k, inWhere: "summary" };
-  }
-  for (const k of needles) {
-    const needle = k.replace(/\s+/g, "_").toLowerCase();
-    if (primary.toLowerCase().includes(needle)) return { keyword: k, inWhere: "type" };
-    if (types.some((t) => t.toLowerCase().includes(needle))) return { keyword: k, inWhere: "type" };
-    if (primaryDN.toLowerCase().includes(k.toLowerCase())) return { keyword: k, inWhere: "type" };
-  }
-  return { keyword: null, inWhere: null };
-}
 
 // ---------- small helpers ----------
-function hasParkingHeuristic(r: any): boolean {
-  const po = r?.parkingOptions;
-  const summary = String(r?.editorial_summary || r?.editorialSummary || "").toLowerCase();
-  const hint =
-    summary.includes("parking") ||
-    summary.includes("car park") ||
-    summary.includes("parking lot");
-  if (po && typeof po === "object") {
-    return Object.values(po).some(Boolean) || hint;
-  }
-  return Boolean(po) || hint;
-}
 
 function pickDeterministic<T>(arr: T[], seed: string, count = 2): T[] {
   if (!arr?.length) return [];
@@ -202,7 +157,6 @@ function pickDeterministic<T>(arr: T[], seed: string, count = 2): T[] {
   }
   return out;
 }
-
 // ---------- matches for comments ----------
 type MatchRow = {
   id: string;
@@ -217,14 +171,18 @@ export default function HomeScreen() {
   const [coords, setCoords] = useState<Coords | null>(null);
   const [city, setCity] = useState<string | null>(null);
   const [locError, setLocError] = useState<string | null>(null);
-  const [preferredName, setPreferredName] = useState<string>(nameFromUser(auth.currentUser));
+
+  // Preferred name pulled from DB (/api/users/me)
+  const [preferredName, setPreferredName] = useState<string>(fallbackName(auth.currentUser));
   const userInitials = initialsFromUser(auth.currentUser);
 
   const [winnerCard, setWinnerCard] = useState<Restaurant | null>(null);
 
   const [preferredCuisines, setPreferredCuisines] = useState<string[]>([]);
-
   const [commentsByRestaurant, setCommentsByRestaurant] = useState<Record<string, string[]>>({});
+
+  // Guard so discovery runs once per mount when data is ready
+  const discoveryRanRef = useRef(false);
 
   const loadPreferredNameFromDB = useCallback(async () => {
     if (!auth.currentUser) {
@@ -292,7 +250,7 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Pull preferences
+  // Pull preferences (we only need preferredCuisines for discovery bias)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -314,6 +272,60 @@ export default function HomeScreen() {
       cancelled = true;
     };
   }, []);
+
+  // 🔎 Kick off discovery once when we have coords + preferred cuisines
+  useEffect(() => {
+    const run = async () => {
+      if (discoveryRanRef.current) return;
+      if (!coords) return;
+      if (!auth.currentUser) return;
+
+      // Only bias when user has prefs; if none, skip per your requirement
+      if (!preferredCuisines || preferredCuisines.length === 0) return;
+
+      discoveryRanRef.current = true;
+
+      try {
+        const headers = await authedHeaders();
+        const bias = expandUserCuisineKeywords(preferredCuisines);
+        console.log("[discover] preferred cuisines:", preferredCuisines);
+        console.log("[discover] expanded keywords:", bias);
+
+        const body = {
+          lat: coords.latitude,
+          lng: coords.longitude,
+          maxNew: 20,               // ask for up to 20 new restaurants
+          // optional: pass cuisines so server can log/override (server can also read from DB)
+          preferredCuisines,
+        };
+
+        const resp = await fetch(DISCOVER_ENDPOINT, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+
+        if (!resp.ok) {
+          console.log("[discover] server responded", resp.status);
+          return;
+        }
+        const json = await resp.json();
+        // Flexible logging depending on what server returns
+        const found = json?.found ?? json?.discovered ?? 0;
+        const created = json?.created ?? json?.new ?? 0;
+        const tried = json?.tried ?? json?.attempts ?? undefined;
+        const serverCuisines = json?.cuisinesUsed || json?.cuisines || preferredCuisines;
+
+        console.log("[discover] cuisines used:", serverCuisines);
+        console.log(
+          `[discover] result: found=${found}, created=${created}${typeof tried === "number" ? `, attempts=${tried}` : ""}`
+        );
+      } catch (e) {
+        console.log("[discover] failed:", e);
+      }
+    };
+    run();
+  }, [coords?.latitude, coords?.longitude, preferredCuisines?.join("|")]);
 
   // Pull matches -> build comments map
   useEffect(() => {
@@ -364,7 +376,6 @@ export default function HomeScreen() {
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [winnerPicked, setWinnerPicked] = useState<string | null>(null);
-
   const [actionBusy, setActionBusy] = useState(false);
 
   return (
@@ -455,7 +466,6 @@ export default function HomeScreen() {
                     });
                   } catch {}
                 })();
-                // eslint-disable-next-line react-hooks/exhaustive-deps
               }, [top3CandidateIds.join("|"), superStarRestaurantId]);
 
               const nameFor = (id: string) => {
@@ -469,7 +479,7 @@ export default function HomeScreen() {
                 try {
                   const token = await auth.currentUser?.getIdToken();
                   if (!token) return null;
-                  const r = await fetch(`${API_BASE}/api/recs/winner`, {
+                const r = await fetch(`${API_BASE}/api/recs/winner`, {
                     headers: { Authorization: `Bearer ${token}` },
                   });
                   if (!r.ok) return null;
@@ -484,15 +494,12 @@ export default function HomeScreen() {
                 try {
                   setFinalizing(true);
                   setFinalizeError(null);
-
                   const result = await finalizeMatch(id);
-
                   let winner: Restaurant | null = null;
                   if (result && typeof result === "object" && "winner" in (result as any)) {
                     winner = (result as any).winner as Restaurant;
                   }
                   if (!winner) winner = await fetchWinnerFromBackend();
-
                   if (winner) {
                     setWinnerCard(winner);
                     setWinnerPicked(id);
@@ -717,7 +724,7 @@ export default function HomeScreen() {
 
                       <Text style={styles.budget}>{renderBudgetStars(displayCard.priceLevel)}</Text>
 
-                      {/* Comments section */}
+                      {/* Comments */}
                       <View style={styles.commentsBox}>
                         <Text style={styles.commentsTitle}>Comments from users</Text>
                         <View style={{ height: 10 }} />
@@ -837,6 +844,44 @@ export default function HomeScreen() {
       </View>
     </AppContainer>
   );
+}
+
+function hasParkingHeuristic(r: any): boolean {
+  const po = r?.parkingOptions;
+  const summary = String(r?.editorial_summary || r?.editorialSummary || "").toLowerCase();
+  const hint =
+    summary.includes("parking") ||
+    summary.includes("car park") ||
+    summary.includes("parking lot");
+  if (po && typeof po === "object") {
+    return Object.values(po).some(Boolean) || hint;
+  }
+  return Boolean(po) || hint;
+}
+
+function findMatchedKeyword(
+  r: any,
+  userPrefs: string[]
+): { keyword: string | null; inWhere: "summary" | "type" | null } {
+  if (!r) return { keyword: null, inWhere: null };
+  const needles = expandUserCuisineKeywords(userPrefs);
+  if (!needles.length) return { keyword: null, inWhere: null };
+
+  const summary = String(r?.editorial_summary || r?.editorialSummary || "");
+  const primary = String(r?.primaryType || "");
+  const types: string[] = Array.isArray(r?.types) ? r.types.map(String) : [];
+  const primaryDN = String(r?.primaryTypeDisplayName || r?.name || "");
+
+  for (const k of needles) {
+    if (summary.toLowerCase().includes(k.toLowerCase())) return { keyword: k, inWhere: "summary" };
+  }
+  for (const k of needles) {
+    const needle = k.replace(/\s+/g, "_").toLowerCase();
+    if (primary.toLowerCase().includes(needle)) return { keyword: k, inWhere: "type" };
+    if (types.some((t) => t.toLowerCase().includes(needle))) return { keyword: k, inWhere: "type" };
+    if (primaryDN.toLowerCase().includes(k.toLowerCase())) return { keyword: k, inWhere: "type" };
+  }
+  return { keyword: null, inWhere: null };
 }
 
 function renderBudgetStars(level?: 0 | 1 | 2 | 3 | 4) {
