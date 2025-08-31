@@ -286,34 +286,33 @@ export default function GroupJoin() {
   }
 
   // actions
-const sendFeedback = useCallback(
-  async (action: "LIKE" | "PASS" | "SUPERSTAR" = "LIKE") => {
-    if (!card || !sessionId || actionBusy) return;
-    try {
-      setActionBusy(true);
-      bump();
-      const headers = await authedHeaders();
-      await fetch(
-        `${API_BASE}/api/group/session/${encodeURIComponent(sessionId)}/feedback`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ restaurantId: card.id, action }),
-        }
-      );
-    } catch {
-      toast("Failed to send feedback");
-    } finally {
-      // 🔑 UI tweak: immediately clear current card so extra taps can’t re-hit it,
-      // then pull a fresh one from the server.
-      setCard(null);
-      setTimeout(loadState, 150);
-      setActionBusy(false);
-    }
-  },
-  [card, sessionId, actionBusy, authedHeaders, loadState]
-);
-
+  const sendFeedback = useCallback(
+    async (action: "LIKE" | "PASS" | "SUPERSTAR" = "LIKE") => {
+      if (!card || !sessionId || actionBusy) return;
+      try {
+        setActionBusy(true);
+        bump();
+        const headers = await authedHeaders();
+        await fetch(
+          `${API_BASE}/api/group/session/${encodeURIComponent(sessionId)}/feedback`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ restaurantId: card.id, action }),
+          }
+        );
+      } catch {
+        toast("Failed to send feedback");
+      } finally {
+        // 🔑 UI tweak: immediately clear current card so extra taps can’t re-hit it,
+        // then pull a fresh one from the server.
+        setCard(null);
+        setTimeout(loadState, 150);
+        setActionBusy(false);
+      }
+    },
+    [card, sessionId, actionBusy, authedHeaders, loadState]
+  );
 
   // comments for current card
   const twoComments = useMemo(() => {
@@ -360,25 +359,25 @@ const sendFeedback = useCallback(
           </View>
         ) : card ? (
           <>
-            {/* PASS | IMAGE | LIKE/SUPER */}
-            <View style={styles.cardRow}>
-              <Pressable
-                onPress={() => sendFeedback("PASS")}
-                disabled={actionBusy}
-                style={({ pressed }) => [
-                  styles.sideBtn,
-                  (pressed || actionBusy) && styles.sideBtnPressed,
-                  actionBusy && { opacity: 0.6 },
-                ]}
-              >
-                <Text style={styles.sideLabel}>Pass</Text>
-              </Pressable>
+            <View style={styles.cardInteractionContainer}>
+              {/* PASS | IMAGE | LIKE */}
+              <View style={styles.cardRow}>
+                <Pressable
+                  onPress={() => sendFeedback("PASS")}
+                  disabled={actionBusy}
+                  style={({ pressed }) => [
+                    styles.sideBtn,
+                    (pressed || actionBusy) && styles.sideBtnPressed,
+                    actionBusy && { opacity: 0.6 },
+                  ]}
+                >
+                  <Text style={styles.sideLabel}>Pass</Text>
+                </Pressable>
 
-              <Animated.View style={[styles.card, styles.cardSquare, { transform: [{ scale: cardScale }] }]}>
-                <HeroImage uri={card.photoUrl} altKey={card.id} />
-              </Animated.View>
+                <Animated.View style={[styles.card, styles.cardSquare, { transform: [{ scale: cardScale }] }]}>
+                  <HeroImage uri={card.photoUrl} altKey={card.id} />
+                </Animated.View>
 
-              <View style={{ gap: 10 }}>
                 <Pressable
                   onPress={() => sendFeedback("LIKE")}
                   disabled={actionBusy}
@@ -390,19 +389,20 @@ const sendFeedback = useCallback(
                 >
                   <Text style={styles.sideLabel}>Like</Text>
                 </Pressable>
-                <Pressable
-                  onPress={() => sendFeedback("SUPERSTAR")}
-                  disabled={actionBusy}
-                  style={({ pressed }) => [
-                    styles.sideBtn,
-                    styles.superBtn,
-                    (pressed || actionBusy) && styles.sideBtnPressed,
-                    actionBusy && { opacity: 0.6 },
-                  ]}
-                >
-                  <Text style={[styles.sideLabel, { color: "#fff" }]}>★</Text>
-                </Pressable>
               </View>
+
+              {/* Superlike Button */}
+              <Pressable
+                onPress={() => sendFeedback("SUPERSTAR")}
+                disabled={actionBusy}
+                style={({ pressed }) => [
+                  styles.superlikeButton,
+                  (pressed || actionBusy) && styles.sideBtnPressed,
+                  actionBusy && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={styles.superlikeButtonText}>★</Text>
+              </Pressable>
             </View>
 
             {/* DETAILS */}
@@ -521,6 +521,10 @@ const styles = StyleSheet.create({
   centerFill: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
 
   // main card row
+  cardInteractionContainer: {
+    alignItems: "center",
+    marginBottom: 22,
+  },
   cardRow: {
     width: "100%",
     paddingHorizontal: 6,
@@ -528,7 +532,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 22,
   },
   sideBtn: {
     width: 64,
@@ -541,8 +544,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sideBtnPressed: { transform: [{ scale: 0.97 }] },
-  superBtn: { backgroundColor: ACCENT, borderColor: ACCENT },
   sideLabel: { fontSize: 16, fontWeight: "700", color: TEXT },
+  superlikeButton: {
+    marginTop: -20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: ACCENT,
+    borderColor: "#f8fafc",
+    borderWidth: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 8,
+    zIndex: 1,
+  },
+  superlikeButtonText: {
+    fontSize: 24,
+    color: "#fff",
+    lineHeight: 28,
+  },
 
   // square hero
   card: {
