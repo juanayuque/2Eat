@@ -14,7 +14,10 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We use your location to find great places to eat nearby."
+      }
     },
     "android": {
       "adaptiveIcon": {

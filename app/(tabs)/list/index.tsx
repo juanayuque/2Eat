@@ -1,4 +1,3 @@
-// app/(tabs)/list/index.tsx
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
@@ -42,6 +41,7 @@ type MatchItem = {
   top2: Resto | null;
   top3: Resto | null;
   superStar: Resto | null;
+  isGroup?: boolean; // <— NEW: true for group matches
 };
 
 export default function List() {
@@ -71,12 +71,24 @@ export default function List() {
       setErr(null);
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error("Not signed in");
-      const r = await fetch(`${API_BASE}/api/matches`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const json = await r.json();
-      setMatches(json.matches || []);
+
+      const [soloRes, groupRes] = await Promise.all([
+        fetch(`${API_BASE}/api/matches`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE}/api/group/matches`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (!soloRes.ok || !groupRes.ok) throw new Error("HTTP error");
+
+      const solo = await soloRes.json();
+      const group = await groupRes.json();
+
+      const soloMatches: MatchItem[] = (solo.matches || []).map((m: any) => ({ ...m, isGroup: false }));
+      const groupMatches: MatchItem[] = (group.matches || []).map((m: any) => ({ ...m, isGroup: true }));
+
+      const merged = [...soloMatches, ...groupMatches].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      setMatches(merged);
     } catch (e: any) {
       setErr(e?.message || "Failed to load history");
     } finally {
@@ -91,7 +103,6 @@ export default function List() {
     }, [fetchMatches])
   );
 
-  // Keep draft synced with the opened item
   useEffect(() => {
     if (open) setCommentDraft(open.userComment || "");
   }, [open?.id]);
@@ -100,7 +111,7 @@ export default function List() {
     if (level == null) return "☆☆☆☆  ·  Budget";
     const l = Math.max(0, Math.min(4, level));
     return `${"★".repeat(l)}${"☆".repeat(4 - l)}  ·  Budget`;
-  }
+    }
 
   function dateLabel(iso: string) {
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
@@ -122,15 +133,10 @@ export default function List() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const { userComment } = await r.json();
 
-      // reflect in local list
-      setMatches((prev) =>
-        prev.map((m) => (m.id === open.id ? { ...m, userComment } : m))
-      );
-
-      // close modal + toast
+      setMatches((prev) => prev.map((m) => (m.id === open.id ? { ...m, userComment } : m)));
       setOpen(null);
       showToast("Saved ✓");
-    } catch (e: any) {
+    } catch {
       showToast("Could not save");
     } finally {
       setSaving(false);
@@ -140,11 +146,14 @@ export default function List() {
   const renderItem = ({ item }: { item: MatchItem }) => {
     const w = item.winner || item.top1;
     const uri = w?.photoUrl || null;
+    const isGroup = !!item.isGroup;
+
     return (
       <Pressable
         onPress={() => setOpen(item)}
         style={({ pressed }) => [
           styles.card,
+          isGroup && styles.cardGroup, // <— tinted for group matches
           pressed && { opacity: 0.96, transform: [{ translateY: 1 }] },
         ]}
       >
@@ -156,10 +165,15 @@ export default function List() {
           )}
         </View>
         <View style={styles.info}>
-          <Text style={styles.title}>{w?.name || "Winner"}</Text>
-          {!!w?.address && (
-            <Text style={styles.address} numberOfLines={1}>{w.address}</Text>
-          )}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={styles.title}>{w?.name || "Winner"}</Text>
+            {isGroup && (
+              <View style={styles.groupBadge}>
+                <Text style={styles.groupBadgeText}>Group</Text>
+              </View>
+            )}
+          </View>
+          {!!w?.address && <Text style={styles.address} numberOfLines={1}>{w.address}</Text>}
           {!!(w?.editorial_summary || w?.editorialSummary) && (
             <Text style={styles.summary} numberOfLines={2}>
               {w?.editorial_summary || w?.editorialSummary}
@@ -229,7 +243,6 @@ export default function List() {
                   </View>
                   {!!open.superStar && <Slot label="Super Star" r={open.superStar} />}
 
-                  {/* Comment box (DB-backed) */}
                   <View style={styles.commentBox}>
                     <Text style={styles.commentLabel}>Comment your experience</Text>
                     <TextInput
@@ -309,7 +322,7 @@ function Slot({ label, r, small = false }: { label: string; r: Resto | null; sma
   function budgetStars(level?: number | null) {
     if (level == null) return "☆☆☆☆  ·  Budget";
     const l = Math.max(0, Math.min(4, level));
-    return `${("★").repeat(l)}${("☆").repeat(4 - l)}  ·  Budget`;
+    return `${"★".repeat(l)}${"☆".repeat(4 - l)}  ·  Budget`;
   }
 }
 
@@ -345,6 +358,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
+  // <— Group styling (indigo tint)
+  cardGroup: {
+    backgroundColor: "#eef2ff",
+    borderColor: "#c7d2fe",
+  },
+
   photoWrap: {
     width: 84,
     height: 84,
@@ -359,6 +378,16 @@ const styles = StyleSheet.create({
   address: { color: "#333" },
   summary: { color: "#444" },
   metaRow: { color: "#555", marginTop: 4, fontSize: 12 },
+
+  groupBadge: {
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+    backgroundColor: "#fff",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  groupBadgeText: { color: "#4f46e5", fontWeight: "800", fontSize: 11 },
 
   // Modal (light)
   modalWrap: {

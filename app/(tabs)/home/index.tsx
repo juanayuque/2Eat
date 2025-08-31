@@ -211,9 +211,6 @@ export default function HomeScreen() {
 
   const [winnerCard, setWinnerCard] = useState<Restaurant | null>(null);
 
-  const [swipeCount, setSwipeCount] = useState(0);
-  const MAX_SWIPES = 15;
-
   const [preferredCuisines, setPreferredCuisines] = useState<string[]>([]);
 
   const [commentsByRestaurant, setCommentsByRestaurant] = useState<Record<string, string[]>>({});
@@ -354,9 +351,6 @@ export default function HomeScreen() {
             </Text>
           </Text>
           <Text style={styles.subtitle}>Like, Pass, or Super Star to shape your match!</Text>
-          <Text style={styles.progress}>
-            Swipes: <Text style={styles.progressStrong}>{swipeCount}</Text> / {MAX_SWIPES}
-          </Text>
         </View>
 
         {coords ? (
@@ -378,23 +372,20 @@ export default function HomeScreen() {
               const displayCard = winnerCard || current || null;
               const heroUri = displayCard?.photoUrl ?? null;
 
-              const guarded = async (fn: () => Promise<any>, countSwipe = false) => {
+              const guarded = async (fn: () => Promise<any>) => {
                 if (actionBusy || finalizing || !!winnerCard) return;
                 try {
                   setActionBusy(true);
                   bump();
                   await fn();
-                  if (countSwipe) {
-                    setSwipeCount((n) => Math.min(MAX_SWIPES, n + 1));
-                  }
                 } finally {
                   setActionBusy(false);
                 }
               };
 
-              const onPass = () => guarded(() => pass(), true);
-              const onLike = () => guarded(() => like(), true);
-              const onSuper = () => guarded(() => superStar(), true);
+              const onPass = () => guarded(() => pass());
+              const onLike = () => guarded(() => like());
+              const onSuper = () => guarded(() => superStar());
 
               useEffect(() => {
                 if (shouldMatchPrompt && !winnerPicked && !winnerCard) {
@@ -494,7 +485,6 @@ export default function HomeScreen() {
                 setFinalizeError(null);
                 setMatchOpen(false);
                 setWinnerCard(null);
-                setSwipeCount(0);
                 await restart();
               };
 
@@ -524,47 +514,47 @@ export default function HomeScreen() {
 
               return (
                 <>
-                  {/* PASS | IMAGE | LIKE/SUPER */}
-                  <View style={styles.cardRow}>
-                    {!winnerCard ? (
-                      <Pressable
-                        onPress={onPass}
-                        disabled={actionBusy || loading}
-                        style={({ pressed }) => [
-                          styles.sideBtn,
-                          (pressed || actionBusy) && styles.sideBtnPressed,
-                          (actionBusy || loading) && { opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={styles.sideLabel}>Pass</Text>
-                      </Pressable>
-                    ) : (
-                      <View style={{ width: 64, height: 64 }} />
-                    )}
-
-                    <Animated.View
-                      style={[styles.card, styles.cardSquare, { transform: [{ scale: cardScale }] }]}
-                    >
-                      {loading && !displayCard ? (
-                        <View style={styles.centerFill}>
-                          <ActivityIndicator />
-                        </View>
-                      ) : displayCard ? (
-                        <HeroImage uri={heroUri} altKey={displayCard.id} />
+                  <View style={styles.cardInteractionContainer}>
+                    {/* PASS | IMAGE | LIKE */}
+                    <View style={styles.cardRow}>
+                      {!winnerCard ? (
+                        <Pressable
+                          onPress={onPass}
+                          disabled={actionBusy || loading}
+                          style={({ pressed }) => [
+                            styles.sideBtn,
+                            (pressed || actionBusy) && styles.sideBtnPressed,
+                            (actionBusy || loading) && { opacity: 0.6 },
+                          ]}
+                        >
+                          <Text style={styles.sideLabel}>Pass</Text>
+                        </Pressable>
                       ) : (
-                        <View style={styles.centerFill}>
-                          <Text style={{ color: "#666", textAlign: "center" }}>
-                            {error ? "Could not load suggestions." : "No more suggestions."}
-                          </Text>
-                          <Pressable onPress={onMatchAgain} style={styles.refreshBtn}>
-                            <Text style={styles.refreshBtnText}>Refresh</Text>
-                          </Pressable>
-                        </View>
+                        <View style={{ width: 64, height: 64 }} />
                       )}
-                    </Animated.View>
 
-                    {!winnerCard ? (
-                      <View style={{ gap: 10 }}>
+                      <Animated.View
+                        style={[styles.card, styles.cardSquare, { transform: [{ scale: cardScale }] }]}
+                      >
+                        {loading && !displayCard ? (
+                          <View style={styles.centerFill}>
+                            <ActivityIndicator />
+                          </View>
+                        ) : displayCard ? (
+                          <HeroImage uri={heroUri} altKey={displayCard.id} />
+                        ) : (
+                          <View style={styles.centerFill}>
+                            <Text style={{ color: "#666", textAlign: "center" }}>
+                              {error ? "Could not load suggestions." : "No more suggestions."}
+                            </Text>
+                            <Pressable onPress={onMatchAgain} style={styles.refreshBtn}>
+                              <Text style={styles.refreshBtnText}>Refresh</Text>
+                            </Pressable>
+                          </View>
+                        )}
+                      </Animated.View>
+
+                      {!winnerCard ? (
                         <Pressable
                           onPress={onLike}
                           disabled={actionBusy || loading}
@@ -576,25 +566,28 @@ export default function HomeScreen() {
                         >
                           <Text style={styles.sideLabel}>Like</Text>
                         </Pressable>
-                        <Pressable
-                          onPress={onSuper}
-                          disabled={actionBusy || loading}
-                          style={({ pressed }) => [
-                            styles.sideBtn,
-                            styles.superBtn,
-                            (pressed || actionBusy) && styles.sideBtnPressed,
-                            (actionBusy || loading) && { opacity: 0.6 },
-                          ]}
-                        >
-                          <Text style={[styles.sideLabel, { color: "#fff" }]}>★</Text>
-                        </Pressable>
-                      </View>
+                      ) : (
+                        <View style={{ width: 64, height: 64 }} />
+                      )}
+                    </View>
+
+                    {/* Superlike Button OR Match Again Button */}
+                    {!winnerCard ? (
+                      <Pressable
+                        onPress={onSuper}
+                        disabled={actionBusy || loading}
+                        style={({ pressed }) => [
+                          styles.superlikeButton,
+                          (pressed || actionBusy) && styles.sideBtnPressed,
+                          (actionBusy || loading) && { opacity: 0.6 },
+                        ]}
+                      >
+                        <Text style={styles.superlikeButtonText}>★</Text>
+                      </Pressable>
                     ) : (
-                      <View style={{ gap: 10 }}>
-                        <Pressable onPress={onMatchAgain} style={styles.refreshBtn}>
-                          <Text style={styles.refreshBtnText}>Match again</Text>
-                        </Pressable>
-                      </View>
+                      <Pressable onPress={onMatchAgain} style={styles.matchAgainButton}>
+                        <Text style={styles.refreshBtnText}>Match again</Text>
+                      </Pressable>
                     )}
                   </View>
 
@@ -739,29 +732,43 @@ export default function HomeScreen() {
                         <Text style={styles.modalHint}>Pick tonight’s winner from your top choices.</Text>
 
                         <View style={{ marginTop: 12, gap: 8 }}>
-                          {top3CandidateIds.length ? (
-                            top3CandidateIds.map((id) => (
-                              <Pressable
-                                key={id}
-                                onPress={() => onPickWinner(id)}
-                                disabled={finalizing}
-                                style={({ pressed }) => [
-                                  styles.choiceBtn,
-                                  pressed && { opacity: 0.9 },
-                                  finalizing && { opacity: 0.6 },
-                                ]}
-                              >
-                                <Text style={styles.choiceBtnText}>{nameFor(id)}</Text>
-                              </Pressable>
-                            ))
+                          {top3CandidateIds.length > 0 || !!superStarRestaurantId ? (
+                            <>
+                              {top3CandidateIds.map((id) => (
+                                <Pressable
+                                  key={id}
+                                  onPress={() => onPickWinner(id)}
+                                  disabled={finalizing}
+                                  style={({ pressed }) => [
+                                    styles.choiceBtn,
+                                    pressed && { opacity: 0.9 },
+                                    finalizing && { opacity: 0.6 },
+                                  ]}
+                                >
+                                  <Text style={styles.choiceBtnText}>{nameFor(id)}</Text>
+                                </Pressable>
+                              ))}
+                              {!!superStarRestaurantId && (
+                                <Pressable
+                                  key={superStarRestaurantId}
+                                  onPress={() => onPickWinner(superStarRestaurantId)}
+                                  disabled={finalizing}
+                                  style={({ pressed }) => [
+                                    styles.choiceBtn,
+                                    styles.superStarChoiceBtn,
+                                    pressed && { opacity: 0.9 },
+                                    finalizing && { opacity: 0.6 },
+                                  ]}
+                                >
+                                  <Text style={[styles.choiceBtnText, styles.superStarChoiceBtnText]}>
+                                    ★ {nameFor(superStarRestaurantId)}
+                                  </Text>
+                                </Pressable>
+                              )}
+                            </>
                           ) : (
                             <Text style={{ color: "#555" }}>
                               Not enough picks yet—keep swiping a bit more.
-                            </Text>
-                          )}
-                          {!!superStarRestaurantId && (
-                            <Text style={{ color: "#111", fontWeight: "700" }}>
-                              Super Star: {nameFor(superStarRestaurantId)}
                             </Text>
                           )}
                         </View>
@@ -826,9 +833,11 @@ const styles = StyleSheet.create({
   location: { fontSize: 14, color: "#555", textAlign: "left" },
   locationStrong: { color: "#111", fontWeight: "700" },
   subtitle: { marginTop: 2, fontSize: 14, color: "#666", textAlign: "left" },
-  progress: { marginTop: 6, fontSize: 13, color: "#666" },
-  progressStrong: { color: "#111", fontWeight: "800" },
 
+  cardInteractionContainer: {
+    alignItems: "center",
+    marginBottom: 24,
+  },
   cardRow: {
     width: "100%",
     paddingHorizontal: 6,
@@ -836,7 +845,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 24,
   },
   sideBtn: {
     width: 64,
@@ -848,9 +856,39 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  superBtn: { backgroundColor: ACCENT, borderColor: ACCENT },
   sideBtnPressed: { transform: [{ scale: 0.97 }] },
   sideLabel: { fontSize: 16, fontWeight: "700", color: "#111" },
+
+  superlikeButton: {
+    marginTop: -20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: ACCENT,
+    borderColor: "#fff",
+    borderWidth: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 8,
+    zIndex: 1,
+  },
+  superlikeButtonText: {
+    fontSize: 24,
+    color: "#fff",
+    lineHeight: 28,
+  },
+  matchAgainButton: {
+    marginTop: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: "#111",
+    alignSelf: "center",
+  },
 
   card: {
     overflow: "hidden",
@@ -1001,6 +1039,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8f8fb",
   },
   choiceBtnText: { fontWeight: "800", color: "#111" },
+  superStarChoiceBtn: {
+    backgroundColor: "#eef2ff",
+    borderColor: ACCENT,
+  },
+  superStarChoiceBtnText: {
+    color: ACCENT,
+  },
   modalActions: { marginTop: 14, flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   ghostBtn: {
     minWidth: 110,

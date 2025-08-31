@@ -10,10 +10,10 @@ function usePalette() {
   const light = {
     barBg: "#fff",
     barBorder: "#eee",
-    active: "#111",                   // active icon color
-    inactive: "#8e8e93",              // inactive icon color
-    homeBg: "#111",                   // home square background
-    homeFg: "#fff",                   // home icon color
+    active: "#111",
+    inactive: "#8e8e93",
+    homeBg: "#111",
+    homeFg: "#fff",
     shadow: "#000",
   };
   const dark = {
@@ -72,7 +72,6 @@ export default function TabsLayout() {
               paddingBottom: bottomPad,
               backgroundColor: c.barBg,
               borderTopColor: c.barBorder,
-              // only round the TOP corners so bottom edge is flush
               borderTopLeftRadius: 18,
               borderTopRightRadius: 18,
               borderBottomLeftRadius: 0,
@@ -82,12 +81,21 @@ export default function TabsLayout() {
           ],
         }}
       >
+        {/* Hidden parent route for Group Match (keeps tab bar visible, no tab button) */}
+        <Tabs.Screen
+          name="group-match"
+          options={{
+            href: null,        // hide from tab bar & linking; still navigable via router.push
+            headerShown: false,
+          }}
+        />
+
         {/* 1 — Friends */}
         <Tabs.Screen
           name="friends"
           options={{
             title: "Friends",
-            tabBarIcon: ({ color, size, focused }) => (
+            tabBarIcon: ({ size, focused }) => (
               <MaterialCommunityIcons
                 name={focused ? "account-multiple" : "account-multiple-outline"}
                 size={size ?? 22}
@@ -102,7 +110,7 @@ export default function TabsLayout() {
           name="preferences"
           options={{
             title: "Preferences",
-            tabBarIcon: ({ color, size, focused }) => (
+            tabBarIcon: ({ size, focused }) => (
               <Ionicons
                 name={focused ? "compass" : "compass-outline"}
                 size={size ?? 22}
@@ -117,7 +125,6 @@ export default function TabsLayout() {
           name="home"
           options={{
             title: "Home",
-            // Keep default tab button for perfect centering; render a bigger rounded-square icon inside.
             tabBarIcon: ({ focused }) => <HomeSquare focused={focused} />,
           }}
         />
@@ -127,7 +134,7 @@ export default function TabsLayout() {
           name="list"
           options={{
             title: "List",
-            tabBarIcon: ({ color, size, focused }) => (
+            tabBarIcon: ({ size, focused }) => (
               <Ionicons
                 name={focused ? "list" : "list-outline"}
                 size={size ?? 22}
@@ -142,7 +149,7 @@ export default function TabsLayout() {
           name="settings"
           options={{
             title: "Settings",
-            tabBarIcon: ({ color, size, focused }) => (
+            tabBarIcon: ({ size, focused }) => (
               <Ionicons
                 name={focused ? "settings" : "settings-outline"}
                 size={size ?? 22}
@@ -161,13 +168,13 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 0, // attach to bottom edge
+    bottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
     elevation: 10,
     shadowOpacity: 0.08,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: -2 },
-    overflow: "visible", // let the Home square float up
+    overflow: "visible",
     paddingTop: 8,
   },
   tabItem: {
@@ -178,7 +185,7 @@ const styles = StyleSheet.create({
   homeSquare: {
     width: 56,
     height: 56,
-    borderRadius: 16, // rounded SQUARE (not a circle)
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     shadowOpacity: 0.22,
