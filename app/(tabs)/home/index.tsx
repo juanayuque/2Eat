@@ -32,7 +32,18 @@ function nameFromUser(u: typeof auth.currentUser): string {
   if (n) return n.split(" ")[0];
   const email = u?.email || "";
   const base = email.split("@")[0];
-  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "You";
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "You";}
+
+function fallbackName(u: any) {
+  const n = u?.displayName?.trim();
+  if (n) return n;
+  const base = (u?.email || "").split("@")[0];
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
+}
+
+async function authedHeaders() {
+  const t = await auth.currentUser?.getIdToken(true);
+  return { Authorization: `Bearer ${t}` };
 }
 
 function initialsFromUser(u: typeof auth.currentUser): string {
@@ -215,24 +226,41 @@ export default function HomeScreen() {
 
   const [commentsByRestaurant, setCommentsByRestaurant] = useState<Record<string, string[]>>({});
 
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged((u) => setPreferredName(nameFromUser(u)));
-    return unsub;
+  const loadPreferredNameFromDB = useCallback(async () => {
+    if (!auth.currentUser) {
+      setPreferredName("");
+      return;
+    }
+    try {
+      const headers = await authedHeaders();
+      const r = await fetch(`${API_BASE}/api/users/me`, { headers, cache: "no-store" as any });
+      if (!r.ok) throw new Error("me failed");
+      const j = await r.json();
+      const dbName = (j?.user?.displayName || "").trim();
+      setPreferredName(dbName || fallbackName(auth.currentUser));
+    } catch {
+      setPreferredName(fallbackName(auth.currentUser));
+    }
   }, []);
 
+  // When auth state changes (login/logout), pull name from DB
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged(() => {
+      loadPreferredNameFromDB();
+    });
+    return unsub;
+  }, [loadPreferredNameFromDB]);
+
+  // Refresh on screen focus
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
-        try {
-          await auth.currentUser?.reload();
-          if (!cancelled) setPreferredName(nameFromUser(auth.currentUser));
-        } catch {}
+        try { await auth.currentUser?.reload(); } catch {}
+        if (!cancelled) loadPreferredNameFromDB();
       })();
-      return () => {
-        cancelled = true;
-      };
-    }, [])
+      return () => { cancelled = true; };
+    }, [loadPreferredNameFromDB])
   );
 
   // Location + city

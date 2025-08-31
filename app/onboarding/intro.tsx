@@ -21,7 +21,7 @@ export default function OnboardingIntro() {
     try {
       setBusy(true);
       await AsyncStorage.setItem("enrolmentComplete", "true");
-      router.replace("/(tabs)/home/home"); // or "/(tabs)/home" if your file is index.tsx
+      router.replace("/(tabs)/home"); // 
     } finally {
       setBusy(false);
     }

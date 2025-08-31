@@ -1,5 +1,5 @@
 // app/(tabs)/account/index.tsx
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { signOut, updateProfile } from "firebase/auth";
 import { auth } from "../../../firebaseConfig";
 
@@ -25,18 +26,56 @@ export default function AccountTab() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
+  // DB-backed name
+  const [dbName, setDbName] = useState<string | null>(null);
+
+  const authedHeaders = useCallback(async () => {
+    const t = await auth.currentUser?.getIdToken(true);
+    return { Authorization: `Bearer ${t}`, "Content-Type": "application/json" };
+  }, []);
+
+  const loadMe = useCallback(async () => {
+    try {
+      const headers = await authedHeaders();
+      const r = await fetch(`${BACKEND_API_BASE_URL}/api/users/me`, {
+        headers,
+        cache: "no-store" as any,
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      setDbName((j?.user?.displayName || "").trim() || null);
+    } catch {
+      // ignore transient errors
+    }
+  }, [authedHeaders]);
+
+  // Load on mount & whenever tab focuses
+  useEffect(() => { loadMe(); }, [loadMe]);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMe();
+    }, [loadMe])
+  );
+
   const user = auth.currentUser;
+
+  // Prefer DB displayName → Firebase displayName → email local-part
   const preferredName = useMemo(() => {
-    const n = user?.displayName?.trim();
-    if (n) return n;
+    if (dbName && dbName.trim()) return dbName.trim();
+    const fb = user?.displayName?.trim();
+    if (fb) return fb;
     const base = (user?.email || "").split("@")[0];
     return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
-  }, [user?.displayName, user?.email]);
+  }, [dbName, user?.displayName, user?.email]);
 
+  // Rename modal state
   const [nameVisible, setNameVisible] = useState(false);
   const [nameInput, setNameInput] = useState(preferredName);
+  useEffect(() => setNameInput(preferredName), [preferredName]);
+
   const [savingName, setSavingName] = useState(false);
 
+  // Toast
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -49,40 +88,34 @@ export default function AccountTab() {
   };
 
   const saveName = async () => {
-  const val = nameInput.trim();
-  if (!val) {
-    showToast("Please enter a name");
-    return;
-  }
-  if (!auth.currentUser) {
-    showToast("Not signed in");
-    return;
-  }
-  try {
-    setSavingName(true);
+    const val = nameInput.trim();
+    if (!val) return showToast("Please enter a name");
+    if (!auth.currentUser) return showToast("Not signed in");
+    try {
+      setSavingName(true);
 
-    // 1) Update profile on Firebase
-    await updateProfile(auth.currentUser, { displayName: val });
+      // 1) Update Firebase profile
+      await updateProfile(auth.currentUser, { displayName: val });
+      await auth.currentUser?.reload();
 
-    // 2) refresh the currentUser object so UI sees the change immediately
-    await auth.currentUser?.reload();
+      // 2) Sync DB from token
+      const token = await auth.currentUser.getIdToken(true);
+      await fetch(`${BACKEND_API_BASE_URL}/api/users/sync-profile`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-    // 3) Keep backend in sync (no body needed for sync-profile)
-    const token = await auth.currentUser.getIdToken(true);
-    await fetch(`${BACKEND_API_BASE_URL}/api/users/sync-profile`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+      // 3) Refresh DB snapshot so UI reflects change
+      await loadMe();
 
-    setNameVisible(false);
-    showToast("Name updated");
-  } catch {
-    showToast("Failed to update");
-  } finally {
-    setSavingName(false);
-  }
-};
-
+      setNameVisible(false);
+      showToast("Name updated");
+    } catch {
+      showToast("Failed to update");
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const onMembership = () => showToast("Our app is currently entirely free");
 
@@ -101,10 +134,7 @@ export default function AccountTab() {
           <ItemRow
             title="Preferred name"
             value={preferredName || "Set name"}
-            onPress={() => {
-              setNameInput(preferredName);
-              setNameVisible(true);
-            }}
+            onPress={() => setNameVisible(true)}
           />
           <ItemDivider />
           <ItemRow title="Membership" value="Free" onPress={onMembership} />
@@ -123,6 +153,7 @@ export default function AccountTab() {
         </Pressable>
       </View>
 
+      {/* Rename modal */}
       <Modal
         visible={nameVisible}
         animationType="fade"
@@ -132,9 +163,7 @@ export default function AccountTab() {
         <View style={styles.modalWrap}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Preferred name</Text>
-            <Text style={styles.modalHint}>
-              This is how we’ll greet you in the app.
-            </Text>
+            <Text style={styles.modalHint}>This is how we’ll greet you in the app.</Text>
             <TextInput
               value={nameInput}
               onChangeText={setNameInput}
@@ -169,9 +198,7 @@ export default function AccountTab() {
                   savingName && { opacity: 0.7 },
                 ]}
               >
-                <Text style={styles.primaryBtnText}>
-                  {savingName ? "Saving…" : "Save"}
-                </Text>
+                <Text style={styles.primaryBtnText}>{savingName ? "Saving…" : "Save"}</Text>
               </Pressable>
             </View>
           </View>

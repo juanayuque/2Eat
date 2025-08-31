@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   ActivityIndicator,
   Animated,
   FlatList,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -27,8 +28,9 @@ type Resto = {
   primaryType?: string | null;
   types?: string[] | null;
   editorialSummary?: string | null;
-  editorial_summary?: string | null;
   photoUrl?: string | null;
+  websiteUri?: string | null;
+  internationalPhoneNumber?: string | null; // 👈 Updated field name
 };
 
 type MatchItem = {
@@ -41,17 +43,21 @@ type MatchItem = {
   top2: Resto | null;
   top3: Resto | null;
   superStar: Resto | null;
-  isGroup?: boolean; // <— NEW: true for group matches
+  isGroup?: boolean;
+  hostUserId?: string;
+  friendUserId?: string;
 };
 
 export default function List() {
   const [matches, setMatches] = useState<MatchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   const [open, setOpen] = useState<MatchItem | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
 
   // Toast
   const toastOpacity = useRef(new Animated.Value(0)).current;
@@ -69,8 +75,9 @@ export default function List() {
     try {
       setLoading(true);
       setErr(null);
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error("Not signed in");
+      const user = auth.currentUser;
+      const token = await user?.getIdToken();
+      if (!token || !user) throw new Error("Not signed in");
 
       const [soloRes, groupRes] = await Promise.all([
         fetch(`${API_BASE}/api/matches`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -83,12 +90,31 @@ export default function List() {
 
       const soloMatches: MatchItem[] = (solo.matches || []).map((m: any) => ({ ...m, isGroup: false }));
       const groupMatches: MatchItem[] = (group.matches || []).map((m: any) => ({ ...m, isGroup: true }));
-
       const merged = [...soloMatches, ...groupMatches].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-
       setMatches(merged);
+
+      const friendIds = new Set<string>();
+      const myId = user.uid;
+      merged.forEach((match) => {
+        if (match.isGroup) {
+          const friend = match.hostUserId === myId ? match.friendUserId : match.hostUserId;
+          if (friend) friendIds.add(friend);
+        }
+      });
+
+      if (friendIds.size > 0) {
+        const namesRes = await fetch(`${API_BASE}/api/users/lookup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ ids: Array.from(friendIds) }),
+        });
+        if (namesRes.ok) {
+          const namesData = await namesRes.json();
+          setUserNames((prev) => ({ ...prev, ...(namesData.users || {}) }));
+        }
+      }
     } catch (e: any) {
       setErr(e?.message || "Failed to load history");
     } finally {
@@ -96,7 +122,14 @@ export default function List() {
     }
   }, []);
 
-  // Refresh on first mount AND whenever this screen regains focus
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (user) {
+      const name = user.displayName?.split(" ")[0] || user.email?.split("@")[0] || "You";
+      setCurrentUserName(name);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       fetchMatches();
@@ -111,10 +144,14 @@ export default function List() {
     if (level == null) return "☆☆☆☆  ·  Budget";
     const l = Math.max(0, Math.min(4, level));
     return `${"★".repeat(l)}${"☆".repeat(4 - l)}  ·  Budget`;
-    }
+  }
 
   function dateLabel(iso: string) {
-    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
   }
 
   async function saveComment() {
@@ -122,7 +159,11 @@ export default function List() {
     try {
       setSaving(true);
       const token = await auth.currentUser?.getIdToken();
-      const r = await fetch(`${API_BASE}/api/matches/${open.id}/comment`, {
+      const endpoint = open.isGroup
+        ? `${API_BASE}/api/group/matches/${open.id}/comment`
+        : `${API_BASE}/api/matches/${open.id}/comment`;
+
+      const r = await fetch(endpoint, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -145,15 +186,21 @@ export default function List() {
 
   const renderItem = ({ item }: { item: MatchItem }) => {
     const w = item.winner || item.top1;
-    const uri = w?.photoUrl || null;
+    if (!w) return null;
+
+    const uri = w.photoUrl || null;
     const isGroup = !!item.isGroup;
+
+    const myId = auth.currentUser?.uid;
+    const friendId = isGroup && myId === item.hostUserId ? item.friendUserId : item.hostUserId;
+    const partnerName = friendId ? userNames[friendId]?.split(" ")[0] : null;
 
     return (
       <Pressable
         onPress={() => setOpen(item)}
         style={({ pressed }) => [
           styles.card,
-          isGroup && styles.cardGroup, // <— tinted for group matches
+          isGroup && styles.cardGroup,
           pressed && { opacity: 0.96, transform: [{ translateY: 1 }] },
         ]}
       >
@@ -166,21 +213,25 @@ export default function List() {
         </View>
         <View style={styles.info}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={styles.title}>{w?.name || "Winner"}</Text>
+            <Text style={styles.title}>{w.name || "Winner"}</Text>
             {isGroup && (
               <View style={styles.groupBadge}>
-                <Text style={styles.groupBadgeText}>Group</Text>
+                <Text style={styles.groupBadgeText}>{partnerName ? `w/ ${partnerName}` : "Group"}</Text>
               </View>
             )}
           </View>
-          {!!w?.address && <Text style={styles.address} numberOfLines={1}>{w.address}</Text>}
-          {!!(w?.editorial_summary || w?.editorialSummary) && (
+          {!!w.address && (
+            <Text style={styles.address} numberOfLines={1}>
+              {w.address}
+            </Text>
+          )}
+          {!!w.editorialSummary && (
             <Text style={styles.summary} numberOfLines={2}>
-              {w?.editorial_summary || w?.editorialSummary}
+              {w.editorialSummary}
             </Text>
           )}
           <Text style={styles.metaRow}>
-            {budgetStars(w?.priceLevel ?? null)}  •  {dateLabel(item.createdAt)}
+            {budgetStars(w.priceLevel ?? null)} • {dateLabel(item.createdAt)}
           </Text>
         </View>
       </Pressable>
@@ -188,6 +239,13 @@ export default function List() {
   };
 
   const keyExtractor = (m: MatchItem) => m.id;
+
+  const openFriendName = useMemo(() => {
+    if (!open || !open.isGroup) return null;
+    const myId = auth.currentUser?.uid;
+    const friendId = myId === open.hostUserId ? open.friendUserId : open.hostUserId;
+    return friendId ? userNames[friendId] || "Friend" : "Friend";
+  }, [open, userNames]);
 
   return (
     <AppContainer>
@@ -223,12 +281,15 @@ export default function List() {
           />
         )}
 
-        {/* Detail modal */}
         <Modal visible={!!open} transparent animationType="fade" onRequestClose={() => setOpen(null)}>
           <View style={styles.modalWrap}>
             <View style={styles.modalCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={styles.modalTitle}>Match details</Text>
+                <Text style={styles.modalTitle} numberOfLines={1} ellipsizeMode="tail">
+                  {open?.isGroup
+                    ? `Group Match (${currentUserName} & ${openFriendName})`
+                    : "Match details"}
+                </Text>
                 <Pressable onPress={() => setOpen(null)} style={styles.closeBtn}>
                   <Text style={styles.closeBtnText}>Close</Text>
                 </Pressable>
@@ -241,7 +302,7 @@ export default function List() {
                     {!!open.top2 && <Slot label="#2" r={open.top2} small />}
                     {!!open.top3 && <Slot label="#3" r={open.top3} small />}
                   </View>
-                  {!!open.superStar && <Slot label="Super Star" r={open.superStar} />}
+                  {!open.isGroup && !!open.superStar && <Slot label="Super Star" r={open.superStar} />}
 
                   <View style={styles.commentBox}>
                     <Text style={styles.commentLabel}>Comment your experience</Text>
@@ -254,7 +315,11 @@ export default function List() {
                       style={styles.commentInput}
                     />
                     <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-                      <Pressable disabled={saving} onPress={saveComment} style={[styles.saveBtn, saving && { opacity: 0.8 }]}>
+                      <Pressable
+                        disabled={saving}
+                        onPress={saveComment}
+                        style={[styles.saveBtn, saving && { opacity: 0.8 }]}
+                      >
                         <Text style={styles.saveBtnText}>{saving ? "Saving…" : "Save"}</Text>
                       </Pressable>
                     </View>
@@ -265,28 +330,25 @@ export default function List() {
           </View>
         </Modal>
 
-        {/* Toast */}
-        {toastMsg && (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.toast,
-              {
-                opacity: toastOpacity,
-                transform: [
-                  {
-                    translateY: toastOpacity.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [10, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <Text style={styles.toastText}>{toastMsg}</Text>
-          </Animated.View>
-        )}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              opacity: toastOpacity,
+              transform: [
+                {
+                  translateY: toastOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [10, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </Animated.View>
       </View>
     </AppContainer>
   );
@@ -296,8 +358,10 @@ function Slot({ label, r, small = false }: { label: string; r: Resto | null; sma
   if (!r) return null;
   const uri = r.photoUrl || null;
   const title = r.name || "—";
-  const summary = r.editorial_summary || r.editorialSummary || "";
+  const summary = r.editorialSummary || "";
   const price = r.priceLevel ?? null;
+  const website = r.websiteUri || null;
+  const phone = r.internationalPhoneNumber || null; // 👈 Using updated field name
 
   return (
     <View style={[styles.slot, small && styles.slotSmall]}>
@@ -311,11 +375,31 @@ function Slot({ label, r, small = false }: { label: string; r: Resto | null; sma
           )}
         </View>
         <View style={{ flex: 1, gap: 4 }}>
-          <Text style={styles.slotTitle} numberOfLines={1}>{title}</Text>
-          {!!summary && <Text style={styles.slotSummary} numberOfLines={2}>{summary}</Text>}
+          <Text style={styles.slotTitle} numberOfLines={1}>
+            {title}
+          </Text>
+          {!!summary && (
+            <Text style={styles.slotSummary} numberOfLines={2}>
+              {summary}
+            </Text>
+          )}
           <Text style={styles.slotMeta}>{budgetStars(price)}</Text>
         </View>
       </View>
+      {(website || phone) && (
+        <View style={styles.slotActions}>
+          {!!website && (
+            <Pressable style={styles.slotAction} onPress={() => Linking.openURL(website)}>
+              <Text style={styles.slotActionText}>🌐 Website</Text>
+            </Pressable>
+          )}
+          {!!phone && (
+            <Pressable style={styles.slotAction} onPress={() => Linking.openURL(`tel:${phone}`)}>
+              <Text style={styles.slotActionText}>📞 Call</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 
@@ -358,7 +442,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
-  // <— Group styling (indigo tint)
   cardGroup: {
     backgroundColor: "#eef2ff",
     borderColor: "#c7d2fe",
@@ -373,10 +456,10 @@ const styles = StyleSheet.create({
   },
   photo: { width: "100%", height: "100%" },
 
-  info: { flex: 1, gap: 4 },
+  info: { flex: 1, gap: 4, justifyContent: "center" },
   title: { color: "#111", fontWeight: "800", fontSize: 16 },
-  address: { color: "#333" },
-  summary: { color: "#444" },
+  address: { color: "#333", fontSize: 13 },
+  summary: { color: "#444", fontSize: 13, marginTop: 2 },
   metaRow: { color: "#555", marginTop: 4, fontSize: 12 },
 
   groupBadge: {
@@ -389,7 +472,6 @@ const styles = StyleSheet.create({
   },
   groupBadgeText: { color: "#4f46e5", fontWeight: "800", fontSize: 11 },
 
-  // Modal (light)
   modalWrap: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
@@ -410,7 +492,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
   },
-  modalTitle: { color: "#111", fontWeight: "800", fontSize: 18 },
+  modalTitle: { flex: 1, color: "#111", fontWeight: "800", fontSize: 18, marginRight: 8 },
   closeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -437,6 +519,27 @@ const styles = StyleSheet.create({
   slotTitle: { color: "#111", fontWeight: "800" },
   slotSummary: { color: "#444", fontSize: 12 },
   slotMeta: { color: "#555", fontSize: 12, marginTop: 4 },
+  slotActions: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderColor: "#e5e5ea",
+    flexDirection: "row",
+    gap: 10,
+  },
+  slotAction: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e5e5ea",
+  },
+  slotActionText: {
+    color: "#4f46e5",
+    fontWeight: "700",
+    fontSize: 13,
+  },
 
   commentBox: {
     marginTop: 6,
@@ -476,7 +579,6 @@ const styles = StyleSheet.create({
   },
   ghostBtnText: { color: "#111", fontWeight: "800" },
 
-  // Toast
   toast: {
     position: "absolute",
     left: 16,
