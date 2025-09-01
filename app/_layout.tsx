@@ -1,4 +1,4 @@
-// app/_layout.tsx
+
 import { SplashScreen, Stack } from "expo-router";
 import { useEffect, useState } from "react";
 import { Platform } from "react-native";
@@ -6,27 +6,28 @@ import Toast from "react-native-toast-message";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebaseConfig";
 import * as Font from "expo-font";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-// Load the icon fonts directly so web bundles them
-// (TS needs a tiny .d.ts, see step 2)
-const ioniconsTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf");
-const mciTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf");
+// Web-only: ensure icon @font-face + assets are bundled and served
+import "@expo/vector-icons/build/vendor/react-native-vector-icons/font/react-native-vector-icons.css";
 
-// Optional: env with a safe fallback. If you prefer hardcoding, replace with your URL.
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://2eatapp.com/api";
+// Use an env var so web can be configured at build time
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? "/api";
 
 export default function RootLayout() {
-  const [iconsReady, setIconsReady] = useState(false);
+  // On web the CSS import is enough, so icons are "ready" immediately
+  const [iconsReady, setIconsReady] = useState(Platform.OS === "web");
   const [authReady, setAuthReady] = useState(false);
 
-  // Preload icon fonts on ALL platforms (web + native)
+  // Preload vector icon fonts on native only (iOS/Android)
   useEffect(() => {
+    if (Platform.OS === "web") return;
     let mounted = true;
     (async () => {
       try {
         await Font.loadAsync({
-          Ionicons: ioniconsTtf,
-          MaterialCommunityIcons: mciTtf,
+          ...Ionicons.font,
+          ...MaterialCommunityIcons.font,
         });
       } catch (e) {
         console.warn("Icon fonts failed to load", e);
@@ -55,6 +56,9 @@ export default function RootLayout() {
             credentials: "include",
           });
           if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+          console.log("User verified and synced");
+        } else {
+          console.log("No user signed in");
         }
       } catch (err) {
         console.error("Auth sync error:", err);
@@ -71,6 +75,7 @@ export default function RootLayout() {
     return () => unsub();
   }, []);
 
+  // Wait for both auth + icon fonts
   if (!authReady || !iconsReady) return null;
 
   return (
