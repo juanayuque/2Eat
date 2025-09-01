@@ -827,7 +827,7 @@ export default function HomeScreen() {
                   {/* Winner state banner */}
                   {winnerPicked && (
                     <View style={{ marginTop: 12, alignItems: "center", gap: 8 }}>
-                      <Text style={{ fontWeight: "800", color: "#0f766e" }}>
+                      <Text style={{ fontWeight: "800", color: "#0f766e", paddingBottom: 150, }}>
                         Winner saved! 🎉
                       </Text>
                     </View>
@@ -898,9 +898,9 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     backgroundColor: "#fff",
-    paddingTop: 18,
+    paddingTop: 75,
     paddingHorizontal: 16,
-    paddingBottom: 120,
+    paddingBottom: 30,
   },
   header: { gap: 6, marginBottom: 16 },
   greeting: { fontSize: 22, fontWeight: "800", color: "#111", textAlign: "left" },
@@ -1058,6 +1058,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f7ff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    paddingBottom:50,
+    marginBottom:75,
     gap: 8,
   },
   commentsTitle: { color: "#111", fontWeight: "800", fontSize: 14, textAlign: "left" },

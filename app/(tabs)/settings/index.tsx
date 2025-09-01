@@ -267,7 +267,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#fff" },
   container: {
     paddingHorizontal: 16,
-    paddingTop: 18,
+    paddingTop: 75,
     maxWidth: 520,
     width: "100%",
     alignSelf: "center",

@@ -422,6 +422,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#111",
     textAlign: "left",
+    paddingTop: 75,
   },
   sub: { marginTop: 4, color: "#666" },
 
