@@ -899,7 +899,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     paddingTop: 18,
     paddingHorizontal: 16,
-    paddingBottom: 110,
+    paddingBottom: 210,
   },
   header: { gap: 6, marginBottom: 16 },
   greeting: { fontSize: 22, fontWeight: "800", color: "#111", textAlign: "left" },

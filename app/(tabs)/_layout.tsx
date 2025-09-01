@@ -1,4 +1,3 @@
-// app/(tabs)/_layout.tsx
 import { Tabs } from "expo-router";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { StatusBar } from "expo-status-bar";
@@ -28,7 +27,7 @@ function usePalette() {
   return scheme === "dark" ? dark : light;
 }
 
-// Center Home icon inside a rounded square (NOT a circle)
+// Center Home icon inside a rounded square
 function HomeSquare({ focused }: { focused: boolean }) {
   const c = usePalette();
   return (
@@ -41,7 +40,13 @@ function HomeSquare({ focused }: { focused: boolean }) {
         },
       ]}
     >
-      <Ionicons name={focused ? "home" : "home-outline"} size={26} color={c.homeFg} />
+      <Ionicons
+        name={focused ? "home" : "home-outline"}
+        size={26}
+        color={c.homeFg}
+        // 👇 Added style prop to ensure font is used
+        style={{ fontFamily: "Ionicons" }}
+      />
     </View>
   );
 }
@@ -74,21 +79,13 @@ export default function TabsLayout() {
               borderTopColor: c.barBorder,
               borderTopLeftRadius: 18,
               borderTopRightRadius: 18,
-              borderBottomLeftRadius: 0,
-              borderBottomRightRadius: 0,
               shadowColor: c.shadow,
             },
           ],
         }}
       >
-        {/* Hidden parent route for Group Match (keeps tab bar visible, no tab button) */}
-        <Tabs.Screen
-          name="group-match"
-          options={{
-            href: null,        // hide from tab bar & linking; still navigable via router.push
-            headerShown: false,
-          }}
-        />
+        {/* Hidden parent route for Group Match */}
+        <Tabs.Screen name="group-match" options={{ href: null }} />
 
         {/* 1 — Friends */}
         <Tabs.Screen
@@ -100,6 +97,8 @@ export default function TabsLayout() {
                 name={focused ? "account-multiple" : "account-multiple-outline"}
                 size={size ?? 22}
                 color={focused ? c.active : c.inactive}
+                // 👇 Added style prop to ensure font is used
+                style={{ fontFamily: "MaterialCommunityIcons" }}
               />
             ),
           }}
@@ -115,6 +114,8 @@ export default function TabsLayout() {
                 name={focused ? "compass" : "compass-outline"}
                 size={size ?? 22}
                 color={focused ? c.active : c.inactive}
+                // 👇 Added style prop to ensure font is used
+                style={{ fontFamily: "Ionicons" }}
               />
             ),
           }}
@@ -139,6 +140,8 @@ export default function TabsLayout() {
                 name={focused ? "list" : "list-outline"}
                 size={size ?? 22}
                 color={focused ? c.active : c.inactive}
+                // 👇 Added style prop to ensure font is used
+                style={{ fontFamily: "Ionicons" }}
               />
             ),
           }}
@@ -154,6 +157,8 @@ export default function TabsLayout() {
                 name={focused ? "settings" : "settings-outline"}
                 size={size ?? 22}
                 color={focused ? c.active : c.inactive}
+                // 👇 Added style prop to ensure font is used
+                style={{ fontFamily: "Ionicons" }}
               />
             ),
           }}

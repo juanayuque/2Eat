@@ -920,7 +920,7 @@ function FriendRow({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#fff" },
-  scrollContainer: { paddingBottom: 16 },
+  scrollContainer: { paddingBottom: 36 },
   container: {
     paddingHorizontal: 16,
     paddingTop: 18,
@@ -928,6 +928,7 @@ const styles = StyleSheet.create({
     width: "100%",
     alignSelf: "center",
     gap: 16,
+    paddingBottom: 150, 
   },
   title: { fontSize: 22, fontWeight: "800", color: TEXT },
   subtitle: { fontSize: 14, color: MUTED },
