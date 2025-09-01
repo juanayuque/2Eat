@@ -26,20 +26,10 @@ export default function RootLayout() {
     (async () => {
       try {
         await Font.loadAsync({
-          ...AntDesign.font,
-          ...Entypo.font,
-          ...EvilIcons.font,
-          ...Feather.font,
           ...FontAwesome.font,
-          ...FontAwesome5.font,
-          ...FontAwesome6.font,
-          ...Fontisto.font,
-          ...Foundation.font,
           ...Ionicons.font,
           ...MaterialCommunityIcons.font,
           ...MaterialIcons.font,
-          ...Octicons.font,
-          ...SimpleLineIcons.font,
           ...Zocial.font,
         });
       } catch (e) {
