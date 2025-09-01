@@ -1,201 +1,108 @@
-import { Tabs } from "expo-router";
-import { Platform, StyleSheet, View, useColorScheme } from "react-native";
-import { StatusBar } from "expo-status-bar";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+// app/_layout.tsx
+import { SplashScreen, Stack, useRouter } from "expo-router";
+import { onAuthStateChanged } from "firebase/auth";
+import { useEffect, useState } from "react";
+import Toast from "react-native-toast-message";
+import { auth } from "../firebaseConfig";
+import * as Font from "expo-font";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-function usePalette() {
-  const scheme = useColorScheme();
-  const light = {
-    barBg: "#fff",
-    barBorder: "#eee",
-    active: "#111",
-    inactive: "#8e8e93",
-    homeBg: "#111",
-    homeFg: "#fff",
-    shadow: "#000",
-  };
-  const dark = {
-    barBg: "#0B0B14",
-    barBorder: "#1d1d26",
-    active: "#fff",
-    inactive: "rgba(255,255,255,0.6)",
-    homeBg: "#fff",
-    homeFg: "#111",
-    shadow: "#000",
-  };
-  return scheme === "dark" ? dark : light;
-}
+// Keep CSS import if you have global styles
+import "./global.css";
 
-// Center Home icon inside a rounded square
-function HomeSquare({ focused }: { focused: boolean }) {
-  const c = usePalette();
-  return (
-    <View
-      style={[
-        styles.homeSquare,
-        {
-          backgroundColor: c.homeBg,
-          shadowColor: c.shadow,
-        },
-      ]}
-    >
-      <Ionicons
-        name={focused ? "home" : "home-outline"}
-        size={26}
-        color={c.homeFg}
-        // 👇 Added style prop to ensure font is used
-        style={{ fontFamily: "Ionicons" }}
-      />
-    </View>
-  );
-}
+const BACKEND_API_BASE_URL = "https://2eatapp.com";
 
-export default function TabsLayout() {
-  const c = usePalette();
-  const insets = useSafeAreaInsets();
+// Prevent the splash screen from auto-hiding
+SplashScreen.preventAutoHideAsync();
 
-  const baseHeight = 60;
-  const bottomPad = Math.max(insets.bottom, Platform.OS === "ios" ? 10 : 12);
-  const tabBarHeight = baseHeight + bottomPad;
+export default function RootLayout() {
+  const router = useRouter();
+  const [appReady, setAppReady] = useState(false);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function prepareApp() {
+      try {
+        // 1. Load fonts
+        await Font.loadAsync({
+          ...Ionicons.font,
+          ...MaterialCommunityIcons.font,
+        });
+
+        // 2. Set up auth listener
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+          if (!mounted) {
+            unsubscribe();
+            return;
+          }
+
+          try {
+            if (user) {
+              // Sync profile with backend (optional, but good to have)
+              const idToken = await user.getIdToken();
+              await fetch(`${BACKEND_API_BASE_URL}/api/users/sync-profile`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+                body: JSON.stringify({ uid: user.uid, email: user.email }),
+              });
+              
+              // Decide where to navigate
+              const enrolmentComplete = await AsyncStorage.getItem("enrolmentComplete");
+              if (enrolmentComplete === "true") {
+                router.replace("/home");
+              } else {
+                router.replace("/onboarding/intro");
+              }
+            } else {
+              // If no user, go to onboarding/login
+              router.replace("/onboarding");
+            }
+          } catch (e) {
+            console.error("Auth sync or navigation error:", e);
+            // On error, still navigate to a safe place
+            router.replace("/onboarding");
+          } finally {
+            // App is now ready to be shown
+            if (mounted) setAppReady(true);
+          }
+        });
+
+      } catch (e) {
+        console.warn("App preparation error:", e);
+        // If fonts fail, we can still show the app, maybe with a fallback
+        if (mounted) setAppReady(true);
+      }
+    }
+
+    prepareApp();
+
+
+
+
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+
+
+  // Hide the splash screen ONLY when the app is ready and the router has navigated
+  useEffect(() => {
+    if (appReady) {
+      SplashScreen.hideAsync();
+    }
+  }, [appReady]);
+
+
+  // The Stack navigator will render the correct screen based on the router's state
+  // It will be blank until the router navigates from the useEffect hook above.
   return (
     <>
-      <StatusBar style={c.barBg === "#fff" ? "dark" : "light"} />
-      <Tabs
-        initialRouteName="home"
-        screenOptions={{
-          headerShown: false,
-          tabBarShowLabel: false,
-          tabBarActiveTintColor: c.active,
-          tabBarInactiveTintColor: c.inactive,
-          tabBarItemStyle: styles.tabItem,
-          tabBarStyle: [
-            styles.tabBar,
-            {
-              height: tabBarHeight,
-              paddingBottom: bottomPad,
-              backgroundColor: c.barBg,
-              borderTopColor: c.barBorder,
-              borderTopLeftRadius: 18,
-              borderTopRightRadius: 18,
-              shadowColor: c.shadow,
-            },
-          ],
-        }}
-      >
-        {/* Hidden parent route for Group Match */}
-        <Tabs.Screen name="group-match" options={{ href: null }} />
-
-        {/* 1 — Friends */}
-        <Tabs.Screen
-          name="friends"
-          options={{
-            title: "Friends",
-            tabBarIcon: ({ size, focused }) => (
-              <MaterialCommunityIcons
-                name={focused ? "account-multiple" : "account-multiple-outline"}
-                size={size ?? 22}
-                color={focused ? c.active : c.inactive}
-                // 👇 Added style prop to ensure font is used
-                style={{ fontFamily: "MaterialCommunityIcons" }}
-              />
-            ),
-          }}
-        />
-
-        {/* 2 — Preferences */}
-        <Tabs.Screen
-          name="preferences"
-          options={{
-            title: "Preferences",
-            tabBarIcon: ({ size, focused }) => (
-              <Ionicons
-                name={focused ? "compass" : "compass-outline"}
-                size={size ?? 22}
-                color={focused ? c.active : c.inactive}
-                // 👇 Added style prop to ensure font is used
-                style={{ fontFamily: "Ionicons" }}
-              />
-            ),
-          }}
-        />
-
-        {/* 3 — Home (center) */}
-        <Tabs.Screen
-          name="home"
-          options={{
-            title: "Home",
-            tabBarIcon: ({ focused }) => <HomeSquare focused={focused} />,
-          }}
-        />
-
-        {/* 4 — List */}
-        <Tabs.Screen
-          name="list"
-          options={{
-            title: "List",
-            tabBarIcon: ({ size, focused }) => (
-              <Ionicons
-                name={focused ? "list" : "list-outline"}
-                size={size ?? 22}
-                color={focused ? c.active : c.inactive}
-                // 👇 Added style prop to ensure font is used
-                style={{ fontFamily: "Ionicons" }}
-              />
-            ),
-          }}
-        />
-
-        {/* 5 — Settings */}
-        <Tabs.Screen
-          name="settings"
-          options={{
-            title: "Settings",
-            tabBarIcon: ({ size, focused }) => (
-              <Ionicons
-                name={focused ? "settings" : "settings-outline"}
-                size={size ?? 22}
-                color={focused ? c.active : c.inactive}
-                // 👇 Added style prop to ensure font is used
-                style={{ fontFamily: "Ionicons" }}
-              />
-            ),
-          }}
-        />
-      </Tabs>
+      <Stack screenOptions={{ headerShown: false }} />
+      <Toast />
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  tabBar: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    elevation: 10,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -2 },
-    overflow: "visible",
-    paddingTop: 8,
-  },
-  tabItem: {
-    paddingTop: 4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  homeSquare: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-});
