@@ -7,7 +7,6 @@ import { auth } from "../firebaseConfig";
 import { Platform } from "react-native";
 import * as Font from "expo-font";
 import "./global.css";
-import "@expo/vector-icons/build/vendor/react-native-vector-icons/font/react-native-vector-icons.css";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 const BACKEND_API_BASE_URL = "https://2eatapp.com";
