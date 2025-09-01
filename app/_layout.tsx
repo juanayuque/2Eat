@@ -6,27 +6,41 @@ import Toast from "react-native-toast-message";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebaseConfig";
 import * as Font from "expo-font";
+// Load all families you might use:
+import {
+  FontAwesome,
+  Ionicons,
+  MaterialCommunityIcons,
+  MaterialIcons,
+  Zocial,
+} from "@expo/vector-icons";
 
-// Load the icon fonts directly so web bundles them
-// (TS needs a tiny .d.ts, see step 2)
-const ioniconsTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf");
-const mciTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf");
-
-// Optional: env with a safe fallback. If you prefer hardcoding, replace with your URL.
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://2eatapp.com/api";
 
 export default function RootLayout() {
   const [iconsReady, setIconsReady] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
-  // Preload icon fonts on ALL platforms (web + native)
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         await Font.loadAsync({
-          Ionicons: ioniconsTtf,
-          MaterialCommunityIcons: mciTtf,
+          ...AntDesign.font,
+          ...Entypo.font,
+          ...EvilIcons.font,
+          ...Feather.font,
+          ...FontAwesome.font,
+          ...FontAwesome5.font,
+          ...FontAwesome6.font,
+          ...Fontisto.font,
+          ...Foundation.font,
+          ...Ionicons.font,
+          ...MaterialCommunityIcons.font,
+          ...MaterialIcons.font,
+          ...Octicons.font,
+          ...SimpleLineIcons.font,
+          ...Zocial.font,
         });
       } catch (e) {
         console.warn("Icon fonts failed to load", e);
@@ -34,12 +48,9 @@ export default function RootLayout() {
         if (mounted) setIconsReady(true);
       }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
-  // Sync auth with backend
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       try {
