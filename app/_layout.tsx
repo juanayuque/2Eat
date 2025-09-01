@@ -4,35 +4,27 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import Toast from "react-native-toast-message";
 import { auth } from "../firebaseConfig";
-import { Platform } from "react-native";
 import * as Font from "expo-font";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-// Optional global styles
 import "./global.css";
 
 const BACKEND_API_BASE_URL = "https://2eatapp.com";
 
-// Keep splash on until ready
+// Keep splash up until we finish init
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
 
-  // On web, we use the CSS that registers the fonts; on native we load TTFs.
-  const [iconsReady, setIconsReady] = useState(Platform.OS === "web");
+  const [iconsReady, setIconsReady] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [userPresent, setUserPresent] = useState<boolean | null>(null);
   const navigatedRef = useRef(false);
 
-  if (Platform.OS === "web") {
-    require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts.css");
-  }
-
-  // iOS/Android: load icon fonts via expo-font
+  // 🔤 Load vector icon fonts (web + native) via expo-font (no CSS needed)
   useEffect(() => {
-    if (Platform.OS === "web") return;
     let mounted = true;
     (async () => {
       try {
@@ -51,26 +43,23 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Auth init
+  // 🔐 Auth listener (don’t block navigation on sync)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
         if (user) {
           setUserPresent(true);
-          // Optional: sync with backend (don’t block navigation)
           try {
             const idToken = await user.getIdToken();
-            await fetch(`${BACKEND_API_BASE_URL}/api/users/sync-profile`, {
+            fetch(`${BACKEND_API_BASE_URL}/api/users/sync-profile`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${idToken}`,
               },
               body: JSON.stringify({ uid: user.uid, email: user.email }),
-            });
-          } catch (e) {
-            console.warn("sync-profile failed (continuing):", e);
-          }
+            }).catch(() => {});
+          } catch {}
         } else {
           setUserPresent(false);
         }
@@ -78,10 +67,10 @@ export default function RootLayout() {
         setAuthChecked(true);
       }
     });
-    return () => unsub();
+    return unsubscribe;
   }, []);
 
-  // One-time routing decision (prevents “kick out” on refresh)
+  // 🚦 One-time routing decision to avoid “kick out” on refresh
   useEffect(() => {
     if (!iconsReady || !authChecked || navigatedRef.current) return;
 
@@ -89,25 +78,21 @@ export default function RootLayout() {
     const isHome = pathname === "/home" || pathname?.startsWith("/(tabs)");
 
     if (userPresent === true) {
-      if (!isHome && isOnboarding) {
-        router.replace("/home");
-      }
-      navigatedRef.current = true;
+      if (isOnboarding) router.replace("/home");
     } else if (userPresent === false) {
-      if (!isOnboarding) {
-        router.replace("/onboarding");
-      }
-      navigatedRef.current = true;
+      if (!isOnboarding) router.replace("/onboarding");
     }
+    navigatedRef.current = true;
   }, [iconsReady, authChecked, userPresent, pathname, router]);
 
-  // Hide splash once we’re ready
+  // 🧼 Hide splash when ready
   useEffect(() => {
     if (iconsReady && authChecked) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [iconsReady, authChecked]);
 
+  // Keep UI blank until fonts + auth are ready
   if (!iconsReady || !authChecked) return null;
 
   return (
