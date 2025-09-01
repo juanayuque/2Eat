@@ -1,0 +1,11 @@
+/* Make sure normal text has emoji-capable fallbacks */
+html, body, #root, #__next {
+  font-family:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial,
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+}
+
+/* React Native Web text nodes should inherit it */
+.rnw-Text, [data-rnw-text] {
+  font-family: inherit !important;
+}
