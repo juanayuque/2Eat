@@ -10,6 +10,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 const BACKEND_API_BASE_URL = "https://2eatapp.com";
 
+// Bundle icon fonts so web serves local .ttf (avoids flaky CSS/CDN path)
 const ioniconsTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf");
 const mciTtf = require("@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf");
 
@@ -25,27 +26,20 @@ export default function RootLayout() {
       try {
         const fonts =
           Platform.OS === "web"
-            ? {
-                Ionicons: ioniconsTtf,
-                MaterialCommunityIcons: mciTtf,
-              }
-            : {
-                ...Ionicons.font,
-                ...MaterialCommunityIcons.font,
-              };
+            ? { Ionicons: ioniconsTtf, MaterialCommunityIcons: mciTtf }
+            : { ...Ionicons.font, ...MaterialCommunityIcons.font };
 
         await Font.loadAsync(fonts);
-        if (mounted) setIconsReady(true);
       } catch (e) {
         console.warn("Icon fonts failed to load", e);
-        if (mounted) setIconsReady(true); // don't block app
+      } finally {
+        if (mounted) setIconsReady(true);
       }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
+  // (Removed the old CSS <link> injection; not needed when bundling .ttf)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -59,6 +53,7 @@ export default function RootLayout() {
               Authorization: `Bearer ${idToken}`,
             },
             body: JSON.stringify({ uid: user.uid, email: user.email }),
+            credentials: "include",
           });
           if (!response.ok) throw new Error("Backend verification failed");
           console.log("User verified and synced");
@@ -79,7 +74,6 @@ export default function RootLayout() {
     return () => unsubscribe();
   }, []);
 
-  // Wait for both auth + icon fonts before rendering the app tree
   if (!authReady || !iconsReady) return null;
 
   return (
@@ -89,4 +83,3 @@ export default function RootLayout() {
     </>
   );
 }
-
