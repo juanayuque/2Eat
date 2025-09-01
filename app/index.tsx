@@ -18,7 +18,7 @@ export default function Index() {
       if (!mounted) return;
 
       let target = "/onboarding"; // index
-      if (user && flag === "true") target = "/(tabs)/home";
+      if (user && flag === "true") target = "/home";
       else if (user && flag !== "true") target = "/onboarding/intro";
 
       setNextRoute(target);
