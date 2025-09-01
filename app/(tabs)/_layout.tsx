@@ -1,10 +1,13 @@
 // app/(tabs)/_layout.tsx
 import { Tabs } from "expo-router";
 import React from "react";
-import { Platform, StyleSheet, View, Text, useColorScheme } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-// Vector icons still used on native only
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useColorScheme } from "react-native";
+
+// SVG icons for web (no fonts, fully colorable)
+import { Users, Compass, Home as HomeIcon, List as ListIcon, Settings as SettingsIcon } from "lucide-react-native";
 
 const isWeb = Platform.OS === "web";
 
@@ -13,10 +16,10 @@ function usePalette() {
   const light = {
     barBg: "#fff",
     barBorder: "#eee",
-    active: "#111",
+    active: "#111", // dark icons requested
     inactive: "#8e8e93",
     homeBg: "#111",
-    homeFg: "#fff",
+    homeFg: "#fff", // white house requested
     shadow: "#000",
   };
   const dark = {
@@ -24,33 +27,13 @@ function usePalette() {
     barBorder: "#1d1d26",
     active: "#fff",
     inactive: "rgba(255,255,255,0.6)",
-    homeBg: "#fff",
-    homeFg: "#111",
+    homeBg: "#111", // keep dark so the house can be white even in dark mode
+    homeFg: "#fff",
     shadow: "#000",
   };
   return scheme === "dark" ? dark : light;
 }
 
-// Simple emoji icon for web
-function EmojiTab({ glyph, focused }: { glyph: string; focused: boolean }) {
-  return (
-    <View style={{ alignItems: "center", justifyContent: "center" }}>
-      <Text
-        style={{
-          fontSize: 22,
-          lineHeight: 24,
-          opacity: focused ? 1 : 0.6,
-          transform: [{ scale: focused ? 1.05 : 1 }],
-        }}
-        {...(isWeb ? { role: "img", "aria-label": "tab" } : {})}
-      >
-        {glyph}
-      </Text>
-    </View>
-  );
-}
-
-// Center Home icon inside a rounded square
 function HomeSquare({ focused }: { focused: boolean }) {
   const c = usePalette();
   return (
@@ -65,7 +48,7 @@ function HomeSquare({ focused }: { focused: boolean }) {
       ]}
     >
       {isWeb ? (
-        <Text style={{ fontSize: 22, lineHeight: 24, color: c.homeFg }}>🏠</Text>
+        <HomeIcon size={24} color={c.homeFg} />
       ) : (
         <Ionicons name={focused ? "home" : "home-outline"} size={26} color={c.homeFg} />
       )}
@@ -99,46 +82,38 @@ export default function TabsLayout() {
           ],
         }}
       >
-        {/* Hidden parent route for Group Match */}
         <Tabs.Screen name="group-match" options={{ href: null }} />
 
-        {/* 1 — Friends */}
         <Tabs.Screen
           name="friends"
           options={{
             title: "Friends",
-            tabBarIcon: ({ size, focused, color }) =>
-              isWeb ? (
-                <EmojiTab glyph="👥" focused={focused} />
-              ) : (
+            tabBarIcon: ({ size = 22, focused, color }) =>
+              isWeb ? <Users size={size} color={focused ? c.active : c.inactive} /> : (
                 <MaterialCommunityIcons
                   name={focused ? "account-multiple" : "account-multiple-outline"}
-                  size={size ?? 22}
+                  size={size}
                   color={color}
                 />
               ),
           }}
         />
 
-        {/* 2 — Preferences */}
         <Tabs.Screen
           name="preferences"
           options={{
             title: "Preferences",
-            tabBarIcon: ({ size, focused, color }) =>
-              isWeb ? (
-                <EmojiTab glyph="🧭" focused={focused} />
-              ) : (
+            tabBarIcon: ({ size = 22, focused, color }) =>
+              isWeb ? <Compass size={size} color={focused ? c.active : c.inactive} /> : (
                 <Ionicons
                   name={focused ? "compass" : "compass-outline"}
-                  size={size ?? 22}
+                  size={size}
                   color={color}
                 />
               ),
           }}
         />
 
-        {/* 3 — Home (center) */}
         <Tabs.Screen
           name="home"
           options={{
@@ -147,32 +122,26 @@ export default function TabsLayout() {
           }}
         />
 
-        {/* 4 — List */}
         <Tabs.Screen
           name="list"
           options={{
             title: "List",
-            tabBarIcon: ({ size, focused, color }) =>
-              isWeb ? (
-                <EmojiTab glyph="📋" focused={focused} />
-              ) : (
-                <Ionicons name={focused ? "list" : "list-outline"} size={size ?? 22} color={color} />
+            tabBarIcon: ({ size = 22, focused, color }) =>
+              isWeb ? <ListIcon size={size} color={focused ? c.active : c.inactive} /> : (
+                <Ionicons name={focused ? "list" : "list-outline"} size={size} color={color} />
               ),
           }}
         />
 
-        {/* 5 — Settings */}
         <Tabs.Screen
           name="settings"
           options={{
             title: "Settings",
-            tabBarIcon: ({ size, focused, color }) =>
-              isWeb ? (
-                <EmojiTab glyph="⚙️" focused={focused} />
-              ) : (
+            tabBarIcon: ({ size = 22, focused, color }) =>
+              isWeb ? <SettingsIcon size={size} color={focused ? c.active : c.inactive} /> : (
                 <Ionicons
                   name={focused ? "settings" : "settings-outline"}
-                  size={size ?? 22}
+                  size={size}
                   color={color}
                 />
               ),
@@ -196,7 +165,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     overflow: "visible",
     paddingTop: 8,
-    height: 64, // a touch taller for web click targets
+    height: 64,
   },
   tabItem: {
     paddingTop: 4,
@@ -215,3 +184,4 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
 });
+

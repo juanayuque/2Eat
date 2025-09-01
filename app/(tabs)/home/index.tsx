@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -380,7 +381,7 @@ export default function HomeScreen() {
 
   return (
     <AppContainer>
-      <View style={styles.container}>
+      <ScrollView style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.greeting}>Welcome back, {preferredName}</Text>
           <Text style={styles.location}>
@@ -841,7 +842,7 @@ export default function HomeScreen() {
             <Text style={{ color: "#666" }}>Getting your location…</Text>
           </View>
         )}
-      </View>
+      </ScrollView>
     </AppContainer>
   );
 }
@@ -895,11 +896,11 @@ const ACCENT = "#4f46e5";
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: "#fff",
     paddingTop: 18,
     paddingHorizontal: 16,
-    paddingBottom: 210,
+    paddingBottom: 120,
   },
   header: { gap: 6, marginBottom: 16 },
   greeting: { fontSize: 22, fontWeight: "800", color: "#111", textAlign: "left" },
