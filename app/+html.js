@@ -1,51 +1,40 @@
-// app/+html.js
-import { ScrollViewStyleReset } from 'expo-router/html';
-import { StyleSheet } from 'react-native';
+// app/+not-found.tsx
+import { Link, Stack } from 'expo-router';
+import { View, Text, StyleSheet } from 'react-native';
+import { auth } from '../firebaseConfig';
+import { useState, useEffect } from 'react'; // Import hooks
 
-// Import the specific font families you are using
-import {
-  Ionicons,
-  MaterialCommunityIcons,
-} from '@expo/vector-icons';
+export default function NotFoundScreen() {
+  // Use state to hold the login status
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-// A simple function to create the font-face rules
-function FontFaces() {
-  // This is a trick to get the generated CSS from the icon families.
-  // It creates a temporary component with a style that uses the font family.
-  StyleSheet.registerComponent('FontAwesome', () => Ionicons);
-  StyleSheet.registerComponent('MaterialCommunityIcons', () => MaterialCommunityIcons);
+  // useEffect runs ONLY on the client (in the browser)
+  useEffect(() => {
+    
+    const user = auth.currentUser;
+    setIsLoggedIn(!!user);
+  }, []); // Empty dependency array means it runs once on mount
 
-  // Then, we can extract the generated stylesheet.
-  const sheet = StyleSheet.getSheet();
-
-  return <style dangerouslySetInnerHTML={{ __html: sheet.textContent }} />;
-}
-
-// This is the main component that will be rendered to HTML.
-export default function Root({ children }) {
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-g" />
-        <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1, shrink-to-fit=no"
-        />
-
-        {/*
-          This is the most important part:
-          Inject the generated font-face rules into the head of the page.
-        */}
-        <FontFaces />
-
-        {/*
-          Disable body scrolling which are traditionally handled by native code.
-          However, web browsers require a different approach.
-        */}
-        <ScrollViewStyleReset />
-      </head>
-      <body>{children}</body>
-    </html>
+    <>
+      <Stack.Screen options={{ title: 'Oops!' }} />
+      <View style={styles.container}>
+        <Text style={styles.title}>This screen doesn't exist.</Text>
+        <Link href="/" style={styles.link}>
+          <Text style={styles.linkText}>Go to home screen!</Text>
+        </Link>
+        {/* This will now render correctly after the component mounts in the browser */}
+        {isLoggedIn && <Text style={styles.info}>You are logged in.</Text>}
+      </View>
+    </>
   );
 }
+
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  title: { fontSize: 20, fontWeight: 'bold' },
+  link: { marginTop: 15, paddingVertical: 15 },
+  linkText: { fontSize: 14, color: '#2e78b7' },
+  info: { marginTop: 20 },
+});
