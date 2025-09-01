@@ -390,12 +390,12 @@ function Slot({ label, r, small = false }: { label: string; r: Resto | null; sma
         <View style={styles.slotActions}>
           {!!website && (
             <Pressable style={styles.slotAction} onPress={() => Linking.openURL(website)}>
-              <Text style={styles.slotActionText}>🌐 Website</Text>
+              <Text style={styles.slotActionText}>🌐url</Text>
             </Pressable>
           )}
           {!!phone && (
             <Pressable style={styles.slotAction} onPress={() => Linking.openURL(`tel:${phone}`)}>
-              <Text style={styles.slotActionText}>📞 Call</Text>
+              <Text style={styles.slotActionText}>📞</Text>
             </Pressable>
           )}
         </View>
@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "#e5e5ea",
     flexDirection: "row",
-    gap: 10,
+    gap: 5,
   },
   slotAction: {
     backgroundColor: "#fff",
